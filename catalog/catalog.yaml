@@ -1,0 +1,121 @@
+# spore.host application catalog
+# GPU base: spore-built AMI on AL2023 — DCV 2025.0.20103 + NVIDIA 595.71.05
+# Built with infra/amis/dcv-gpu-al2023.pkr.hcl
+# CPU apps: AMIs TBD — use standard AL2023 until dedicated AMIs are built (#286)
+
+# spore-dcv-gpu-al2023 base AMIs — DCV 2025.0.20103 + NVIDIA 595.71.05 on AL2023
+# Built 2026-05-16 with infra/amis/dcv-gpu-al2023.pkr.hcl
+dcv_gpu_amis: &dcv_gpu_amis
+  us-east-1: ami-0c37fb59c90d1ed3a  # rebuilt 2026-05-16 definitive: enable-client-resize, all fixes
+  # Other regions: run packer build -var region=<region> dcv-gpu-al2023.pkr.hcl
+  us-east-2: ""
+  us-west-1: ""
+  us-west-2: ""
+  eu-west-1: ""
+  eu-west-2: ""
+  eu-central-1: ""
+  ap-southeast-1: ""
+  ap-northeast-1: ""
+
+apps:
+  - name: paraview
+    description: "Scientific visualization — CFD, FEA, large mesh"
+    instance_families: [g6, g5, g4dn]
+    high_vram_families: [g6e]
+    min_vcpus: 4
+    min_memory_gib: 16
+    gpu: true
+    min_vram_gib: 24
+    dcv: true
+    idle_timeout_default: 20m
+    launch_command: /usr/local/bin/start-paraview-dcv
+    aliases: [pv]
+    license: open-source
+    # spore-paraview-5.13.2-dcv AMI: ParaView 5.13.2 + DCV 2023.1 + NVIDIA 550.90.10 (AL2)
+    # DCV configured with auth-token-verifier pointing at spored's embedded verifier (:8444)
+    # Built with infra/amis/paraview.pkr.hcl
+    amis:
+      us-east-1: ami-04df1698830fb58b2  # rebuilt 2026-05-17 DCV-GL NVIDIA Xorg + kiosk-wm
+      # Other regions: run packer build -var region=<region> infra/amis/paraview.pkr.hcl
+      # Fallback for other regions: uses base DCV AMI (no ParaView installed)
+      us-east-2: ami-04239b781533e0ae2
+      us-west-1: ami-055385a154c2c7be7
+      us-west-2: ami-017d0c53440a48b8b
+      eu-west-1: ami-03255242b0ee1097e
+      eu-west-2: ami-072738c544c4799a4
+      eu-central-1: ami-01d899a27cd864289
+      ap-southeast-1: ami-0d1bfd507f4c6aa2b
+      ap-northeast-1: ami-0cd6202cd363b6bc8
+
+  - name: igv
+    description: "Integrative Genomics Viewer — genome browser, sequencing data"
+    instance_families: [c7i, m7i, c6i]
+    min_vcpus: 4
+    min_memory_gib: 16
+    gpu: false
+    dcv: true
+    idle_timeout_default: 30m
+    launch_command: /opt/igv/igv.sh
+    license: open-source
+    amis: {}
+
+  - name: chimerax
+    description: "Protein structure visualization, cryo-EM (UCSF ChimeraX)"
+    instance_families: [g6, g5]
+    high_vram_families: [g6e]
+    min_vcpus: 4
+    min_memory_gib: 16
+    gpu: true
+    min_vram_gib: 24
+    dcv: true
+    idle_timeout_default: 20m
+    launch_command: /usr/bin/chimerax
+    aliases: [chimera]
+    license: open-source
+    amis:
+      us-east-1: ami-0395a52954860831a
+      us-east-2: ami-04239b781533e0ae2
+      us-west-1: ami-055385a154c2c7be7
+      us-west-2: ami-017d0c53440a48b8b
+      eu-west-1: ami-03255242b0ee1097e
+      eu-west-2: ami-072738c544c4799a4
+      eu-central-1: ami-01d899a27cd864289
+      ap-southeast-1: ami-0d1bfd507f4c6aa2b
+      ap-northeast-1: ami-0cd6202cd363b6bc8
+
+  - name: qgis
+    description: "GIS analysis, remote sensing, ecology"
+    instance_families: [c7i, m7i]
+    min_vcpus: 4
+    min_memory_gib: 8
+    gpu: false
+    dcv: true
+    idle_timeout_default: 30m
+    launch_command: /usr/bin/qgis
+    license: open-source
+    amis: {}
+
+  - name: fiji
+    description: "Image analysis — microscopy, histology, connectomics (ImageJ/Fiji)"
+    instance_families: [c7i, m7i]
+    min_vcpus: 4
+    min_memory_gib: 16
+    gpu: false
+    dcv: true
+    idle_timeout_default: 30m
+    launch_command: /opt/fiji/ImageJ-linux64
+    aliases: [imagej]
+    license: open-source
+    amis: {}
+
+  - name: ds9
+    description: "Astronomical image display — observatory standard (SAO)"
+    instance_families: [c7i, m7i]
+    min_vcpus: 2
+    min_memory_gib: 4
+    gpu: false
+    dcv: true
+    idle_timeout_default: 30m
+    launch_command: /usr/bin/ds9
+    license: open-source
+    amis: {}
