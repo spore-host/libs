@@ -1,0 +1,8 @@
+# Test artifacts
+*.out
+coverage.html
+
+# IDE
+.idea/
+.vscode/
+*.swp
