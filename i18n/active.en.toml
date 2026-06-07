@@ -871,7 +871,7 @@ other = "truffle"
 
 [truffle.root.short]
 description = "Short description of truffle CLI"
-other = "🍄 Truffle - AWS EC2 Instance Type Region Finder"
+other = "Truffle - AWS EC2 Instance Type Region Finder"
 
 [truffle.root.long]
 description = "Long description of truffle CLI"
@@ -1286,8 +1286,8 @@ other = "Availability Zones"
 
 [truffle.output.summary.found]
 description = "Summary of search results with pluralization"
-one = "🍄 Found {{.Count}} instance type across {{.Regions}} region(s)"
-other = "🍄 Found {{.Count}} instance types across {{.Regions}} region(s)"
+one = "Found {{.Count}} instance type across {{.Regions}} region(s)"
+other = "Found {{.Count}} instance types across {{.Regions}} region(s)"
 
 [truffle.output.summary.no_results]
 description = "Message when no results found"

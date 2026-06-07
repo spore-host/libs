@@ -689,7 +689,7 @@ other = "⏳ Executando hook de pré-parada (tempo limite: {{.Timeout}})..."
 other = "truffle"
 
 [truffle.root.short]
-other = "🍄 Truffle - Localizador de Regiões de Tipos de Instância AWS EC2"
+other = "Truffle - Localizador de Regiões de Tipos de Instância AWS EC2"
 
 [truffle.root.long]
 other = """Truffle é uma ferramenta CLI para descobrir quais regiões AWS e zonas de disponibilidade
@@ -1024,8 +1024,8 @@ other = "Arquitetura"
 other = "Zonas de Disponibilidade"
 
 [truffle.output.summary.found]
-one = "🍄 Encontrado {{.Count}} tipo de instância em {{.Regions}} região(ões)"
-other = "🍄 Encontrados {{.Count}} tipos de instância em {{.Regions}} região(ões)"
+one = "Encontrado {{.Count}} tipo de instância em {{.Regions}} região(ões)"
+other = "Encontrados {{.Count}} tipos de instância em {{.Regions}} região(ões)"
 
 [truffle.output.summary.no_results]
 other = "Nenhum tipo de instância correspondente encontrado."

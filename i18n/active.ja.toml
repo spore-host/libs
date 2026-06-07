@@ -689,7 +689,7 @@ other = "⏳ プリストップフックを実行中 (タイムアウト: {{.Tim
 other = "truffle"
 
 [truffle.root.short]
-other = "🍄 Truffle - AWS EC2インスタンスタイプリージョンファインダー"
+other = "Truffle - AWS EC2インスタンスタイプリージョンファインダー"
 
 [truffle.root.long]
 other = """Truffleは、特定のEC2インスタンスタイプをサポートするAWSリージョンと
@@ -1024,8 +1024,8 @@ other = "アーキテクチャ"
 other = "アベイラビリティーゾーン"
 
 [truffle.output.summary.found]
-one = "🍄 {{.Regions}}リージョンで{{.Count}}個のインスタンスタイプが見つかりました"
-other = "🍄 {{.Regions}}リージョンで{{.Count}}個のインスタンスタイプが見つかりました"
+one = "{{.Regions}}リージョンで{{.Count}}個のインスタンスタイプが見つかりました"
+other = "{{.Regions}}リージョンで{{.Count}}個のインスタンスタイプが見つかりました"
 
 [truffle.output.summary.no_results]
 other = "一致するインスタンスタイプが見つかりません。"
