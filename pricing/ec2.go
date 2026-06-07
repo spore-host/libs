@@ -177,23 +177,27 @@ func GetEC2HourlyRate(region, instanceType string) float64 {
 	return estimatePriceByFamily(instanceType)
 }
 
-// estimatePriceByFamily provides rough estimates for instance types not in the table
+// estimatePriceByFamily provides rough estimates for instance types not in the table.
+// Base prices are per-vCPU-hour rates (the "large" price / 2 vCPUs). Size multipliers
+// reflect vCPU count relative to "large" (2 vCPUs).
 func estimatePriceByFamily(instanceType string) float64 {
-	// Extract family (e.g., "t3" from "t3.xlarge")
 	parts := strings.Split(instanceType, ".")
 	if len(parts) < 2 {
-		return 0.10 // Default estimate: $0.10/hour
+		return 0.10
 	}
 
 	family := parts[0]
 	size := parts[1]
 
-	// Base prices by family (approximate)
-	basePrice := map[string]float64{
-		"t2":   0.0104,
-		"t3":   0.0104,
-		"t3a":  0.0094,
-		"t4g":  0.0084,
+	// Base prices: the "large" (2 vCPU) hourly rate for each family.
+	// For GPU families without a "large" size, the base is calibrated so that
+	// the family's starting size (typically xlarge or 2xlarge) estimates correctly.
+	// Multipliers below are relative to "large" = 1.0.
+	basePriceLarge := map[string]float64{
+		"t2":   0.0928,
+		"t3":   0.0832,
+		"t3a":  0.0752,
+		"t4g":  0.0672,
 		"m5":   0.096,
 		"m5a":  0.086,
 		"m5n":  0.119,
@@ -209,36 +213,38 @@ func estimatePriceByFamily(instanceType string) float64 {
 		"r5":   0.126,
 		"r5a":  0.113,
 		"r6i":  0.126,
-		"g4dn": 0.526,
-		"g5":   1.006,
-		"p3":   3.06,
-		"p4":   32.77,
+		"g4dn": 0.263,
+		"g5":   0.503,
+		"p3":   0.765,
+		"p4d":  0.6827,
 	}
 
-	// Size multipliers
+	// Multipliers relative to "large" (1.0)
 	sizeMultiplier := map[string]float64{
-		"nano":     0.25,
-		"micro":    1.0,
-		"small":    2.0,
-		"medium":   4.0,
-		"large":    8.0,
-		"xlarge":   16.0,
-		"2xlarge":  32.0,
-		"4xlarge":  64.0,
-		"8xlarge":  128.0,
-		"12xlarge": 192.0,
-		"16xlarge": 256.0,
-		"24xlarge": 384.0,
+		"nano":     0.0625,
+		"micro":    0.125,
+		"small":    0.25,
+		"medium":   0.5,
+		"large":    1.0,
+		"xlarge":   2.0,
+		"2xlarge":  4.0,
+		"4xlarge":  8.0,
+		"8xlarge":  16.0,
+		"12xlarge": 24.0,
+		"16xlarge": 32.0,
+		"24xlarge": 48.0,
+		"48xlarge": 96.0,
+		"metal":    48.0,
 	}
 
-	base, ok := basePrice[family]
+	base, ok := basePriceLarge[family]
 	if !ok {
-		base = 0.10 // Generic default
+		base = 0.10
 	}
 
 	multiplier, ok := sizeMultiplier[size]
 	if !ok {
-		multiplier = 16.0 // Assume xlarge if unknown
+		multiplier = 2.0 // default to xlarge
 	}
 
 	return base * multiplier

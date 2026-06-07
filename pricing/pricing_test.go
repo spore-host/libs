@@ -67,13 +67,13 @@ func TestGetEC2HourlyRate(t *testing.T) {
 			name:         "Unknown instance type (uses estimation)",
 			region:       "us-east-1",
 			instanceType: "unknown.xlarge",
-			expected:     1.6, // Estimated: 0.10 (default base) * 16.0 (xlarge multiplier)
+			expected:     0.2, // Estimated: 0.10 (default base) * 2.0 (xlarge multiplier)
 		},
 		{
 			name:         "Region exists but instance type missing (uses estimation)",
 			region:       "us-east-1",
 			instanceType: "m7i.12xlarge",
-			expected:     19.353600000000002, // Estimated: 0.1008 * 192.0
+			expected:     2.4192, // Estimated: 0.1008 * 24.0
 		},
 	}
 
@@ -96,47 +96,47 @@ func TestEstimatePriceByFamily(t *testing.T) {
 		{
 			name:         "t3.micro",
 			instanceType: "t3.micro",
-			expected:     0.0104, // 0.0104 * 1.0
+			expected:     0.0104, // 0.0832 * 0.125
 		},
 		{
 			name:         "t3.small",
 			instanceType: "t3.small",
-			expected:     0.0208, // 0.0104 * 2.0
+			expected:     0.0208, // 0.0832 * 0.25
 		},
 		{
 			name:         "t3.xlarge",
 			instanceType: "t3.xlarge",
-			expected:     0.1664, // 0.0104 * 16.0
+			expected:     0.1664, // 0.0832 * 2.0
 		},
 		{
 			name:         "m5.large",
 			instanceType: "m5.large",
-			expected:     0.768, // 0.096 * 8.0
+			expected:     0.096, // 0.096 * 1.0
 		},
 		{
 			name:         "c5.4xlarge",
 			instanceType: "c5.4xlarge",
-			expected:     5.44, // 0.085 * 64.0
+			expected:     0.68, // 0.085 * 8.0
 		},
 		{
 			name:         "r5.2xlarge",
 			instanceType: "r5.2xlarge",
-			expected:     4.032, // 0.126 * 32.0
+			expected:     0.504, // 0.126 * 4.0
 		},
 		{
 			name:         "g5.xlarge",
 			instanceType: "g5.xlarge",
-			expected:     16.096, // 1.006 * 16.0
+			expected:     1.006, // 0.503 * 2.0
 		},
 		{
 			name:         "Unknown family (uses default)",
 			instanceType: "unknown.xlarge",
-			expected:     1.6, // 0.10 * 16.0
+			expected:     0.2, // 0.10 * 2.0
 		},
 		{
 			name:         "Unknown size (uses xlarge default)",
 			instanceType: "t3.unknown",
-			expected:     0.1664, // 0.0104 * 16.0
+			expected:     0.1664, // 0.0832 * 2.0
 		},
 		{
 			name:         "Invalid format (no dot)",
@@ -146,17 +146,17 @@ func TestEstimatePriceByFamily(t *testing.T) {
 		{
 			name:         "Metal instance",
 			instanceType: "c5.metal",
-			expected:     1.36, // 0.085 * 16.0 (metal treated as xlarge)
+			expected:     4.08, // 0.085 * 48.0
 		},
 		{
 			name:         "t4g.nano",
 			instanceType: "t4g.nano",
-			expected:     0.0021, // 0.0084 * 0.25
+			expected:     0.0042, // 0.0672 * 0.0625
 		},
 		{
 			name:         "m6i.24xlarge",
 			instanceType: "m6i.24xlarge",
-			expected:     36.864, // 0.096 * 384.0
+			expected:     4.608, // 0.096 * 48.0
 		},
 	}
 
