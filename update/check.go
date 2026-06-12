@@ -83,6 +83,28 @@ func CheckAsync(tool, currentVersion string) <-chan *Result {
 	return ch
 }
 
+// CheckNow performs a synchronous version check and returns the result. Unlike
+// CheckAsync it is NOT gated by the CI / SPORE_NO_UPDATE_CHECK / non-TTY
+// suppressions and it bypasses the 24h cache — it is meant for an explicit,
+// user-initiated check such as the `version` subcommand, where the user is
+// asking "am I current?" and expects a fresh answer. Returns nil if the GitHub
+// releases API can't be reached (the caller renders "couldn't check"). The
+// freshly fetched result is still written to the cache so a subsequent
+// background CheckAsync benefits.
+func CheckNow(tool, currentVersion string) *Result {
+	latest, url, err := fetchLatestRelease(tool)
+	if err != nil {
+		return nil
+	}
+	result := &Result{
+		CurrentVersion: currentVersion,
+		LatestVersion:  latest,
+		UpdateURL:      url,
+	}
+	writeCache(filepath.Join(cacheDirectory(), tool+"-update-check"), result)
+	return result
+}
+
 func check(tool, currentVersion string) *Result {
 	cacheDir := cacheDirectory()
 	cacheFile := filepath.Join(cacheDir, tool+"-update-check")
@@ -169,8 +191,12 @@ type githubRelease struct {
 	HTMLURL string `json:"html_url"`
 }
 
+// githubAPIBase is the GitHub REST API root. It's a package var (not a const) so
+// tests can point fetchLatestRelease at an httptest server.
+var githubAPIBase = "https://api.github.com"
+
 func fetchLatestRelease(tool string) (version, url string, err error) {
-	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", githubOrg, tool)
+	apiURL := fmt.Sprintf("%s/repos/%s/%s/releases/latest", githubAPIBase, githubOrg, tool)
 
 	client := &http.Client{Timeout: httpTimeout}
 	resp, err := client.Get(apiURL)

@@ -2,6 +2,8 @@ package update
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -160,4 +162,52 @@ func containsStr(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// TestCheckNow_NotGatedAndBypassesCache verifies CheckNow does a fresh fetch
+// even when CI / SPORE_NO_UPDATE_CHECK are set (it's an explicit, user-initiated
+// check, unlike CheckAsync) and returns the result from the releases endpoint.
+func TestCheckNow_NotGatedAndBypassesCache(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"tag_name":"v9.9.9","html_url":"https://example.test/releases/v9.9.9"}`))
+	}))
+	defer srv.Close()
+
+	old := githubAPIBase
+	githubAPIBase = srv.URL
+	defer func() { githubAPIBase = old }()
+
+	// Both suppressions on — CheckAsync would return nil; CheckNow must not.
+	t.Setenv("CI", "true")
+	t.Setenv("SPORE_NO_UPDATE_CHECK", "1")
+	// Point the cache at a temp dir so we don't touch the real one.
+	t.Setenv("HOME", t.TempDir())
+
+	res := CheckNow("spawn", "0.1.0")
+	if res == nil {
+		t.Fatal("CheckNow returned nil despite a reachable endpoint (it must not be env-gated)")
+	}
+	if res.LatestVersion != "9.9.9" {
+		t.Errorf("LatestVersion = %q, want 9.9.9", res.LatestVersion)
+	}
+	if !res.HasUpdate() {
+		t.Error("HasUpdate() should be true (9.9.9 > 0.1.0)")
+	}
+}
+
+// TestCheckNow_NilOnFetchError verifies CheckNow returns nil (not a panic) when
+// the endpoint errors, so the caller can render "couldn't check".
+func TestCheckNow_NilOnFetchError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	old := githubAPIBase
+	githubAPIBase = srv.URL
+	defer func() { githubAPIBase = old }()
+	t.Setenv("HOME", t.TempDir())
+
+	if res := CheckNow("spawn", "0.1.0"); res != nil {
+		t.Errorf("CheckNow should return nil on a 500, got %+v", res)
+	}
 }
