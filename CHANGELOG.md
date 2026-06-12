@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-06-12
+
 ### Added
 - `update.CheckNow(tool, currentVersion) *Result` — a synchronous, ungated
   version check for explicit, user-initiated use (e.g. a `version` subcommand).
@@ -23,5 +25,6 @@ of this and earlier tags (`update`, `i18n`, `catalog`, `pricing` packages).
 
 ---
 
-[Unreleased]: https://github.com/spore-host/libs/compare/v0.36.0...HEAD
+[Unreleased]: https://github.com/spore-host/libs/compare/v0.37.0...HEAD
+[0.37.0]: https://github.com/spore-host/libs/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/spore-host/libs/releases/tag/v0.36.0
