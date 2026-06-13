@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.37.1] - 2026-06-12
+
 ### Fixed
 - i18n: removed stray `{{.Count}}`/`{{.Percent}}` template variables from eight
   `truffle.capacity.summary.*` labels in the es/fr/de/ja/pt translations. The
@@ -33,6 +35,7 @@ of this and earlier tags (`update`, `i18n`, `catalog`, `pricing` packages).
 
 ---
 
-[Unreleased]: https://github.com/spore-host/libs/compare/v0.37.0...HEAD
+[Unreleased]: https://github.com/spore-host/libs/compare/v0.37.1...HEAD
+[0.37.1]: https://github.com/spore-host/libs/compare/v0.37.0...v0.37.1
 [0.37.0]: https://github.com/spore-host/libs/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/spore-host/libs/releases/tag/v0.36.0
