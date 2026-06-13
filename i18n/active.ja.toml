@@ -820,28 +820,28 @@ other = "GPU/MLインスタンスのみ"
 other = "キャパシティ予約サマリー:"
 
 [truffle.capacity.summary.total]
-other = "総予約数: {{.Count}}"
+other = "総予約数"
 
 [truffle.capacity.summary.active]
-other = "アクティブな予約: {{.Count}}"
+other = "アクティブな予約"
 
 [truffle.capacity.summary.instance_types]
-other = "インスタンスタイプ: {{.Count}}"
+other = "インスタンスタイプ"
 
 [truffle.capacity.summary.regions]
-other = "リージョン: {{.Count}}"
+other = "リージョン"
 
 [truffle.capacity.summary.azs]
-other = "アベイラビリティーゾーン: {{.Count}}"
+other = "アベイラビリティーゾーン"
 
 [truffle.capacity.summary.total_capacity]
-other = "総キャパシティ: {{.Count}}インスタンス"
+other = "総キャパシティ"
 
 [truffle.capacity.summary.available]
-other = "利用可能キャパシティ: {{.Count}}インスタンス（{{.Percent}}%空き）"
+other = "利用可能キャパシティ"
 
 [truffle.capacity.summary.used]
-other = "使用中キャパシティ: {{.Count}}インスタンス（{{.Percent}}%使用率）"
+other = "使用中キャパシティ"
 
 # =============================================================================
 # TRUFFLE - SPOTコマンド

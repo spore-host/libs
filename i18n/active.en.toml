@@ -1030,35 +1030,35 @@ other = "Capacity Reservation Summary:"
 
 [truffle.capacity.summary.total]
 description = "Total reservations count"
-other = "Total Reservations: {{.Count}}"
+other = "Total Reservations"
 
 [truffle.capacity.summary.active]
 description = "Active reservations count"
-other = "Active Reservations: {{.Count}}"
+other = "Active Reservations"
 
 [truffle.capacity.summary.instance_types]
 description = "Instance types count"
-other = "Instance Types: {{.Count}}"
+other = "Instance Types"
 
 [truffle.capacity.summary.regions]
 description = "Regions count"
-other = "Regions: {{.Count}}"
+other = "Regions"
 
 [truffle.capacity.summary.azs]
 description = "Availability zones count"
-other = "Availability Zones: {{.Count}}"
+other = "Availability Zones"
 
 [truffle.capacity.summary.total_capacity]
 description = "Total capacity"
-other = "Total Capacity: {{.Count}} instances"
+other = "Total Capacity"
 
 [truffle.capacity.summary.available]
 description = "Available capacity"
-other = "Available Capacity: {{.Count}} instances ({{.Percent}}% free)"
+other = "Available Capacity"
 
 [truffle.capacity.summary.used]
 description = "Used capacity"
-other = "Used Capacity: {{.Count}} instances ({{.Percent}}% utilized)"
+other = "Used Capacity"
 
 # =============================================================================
 # TRUFFLE - SPOT COMMAND

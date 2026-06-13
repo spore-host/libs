@@ -820,28 +820,28 @@ other = "Apenas instâncias GPU/ML"
 other = "Resumo de Reserva de Capacidade:"
 
 [truffle.capacity.summary.total]
-other = "Total de Reservas: {{.Count}}"
+other = "Total de Reservas"
 
 [truffle.capacity.summary.active]
-other = "Reservas Ativas: {{.Count}}"
+other = "Reservas Ativas"
 
 [truffle.capacity.summary.instance_types]
-other = "Tipos de Instância: {{.Count}}"
+other = "Tipos de Instância"
 
 [truffle.capacity.summary.regions]
-other = "Regiões: {{.Count}}"
+other = "Regiões"
 
 [truffle.capacity.summary.azs]
-other = "Zonas de Disponibilidade: {{.Count}}"
+other = "Zonas de Disponibilidade"
 
 [truffle.capacity.summary.total_capacity]
-other = "Capacidade Total: {{.Count}} instâncias"
+other = "Capacidade Total"
 
 [truffle.capacity.summary.available]
-other = "Capacidade Disponível: {{.Count}} instâncias ({{.Percent}}% livre)"
+other = "Capacidade Disponível"
 
 [truffle.capacity.summary.used]
-other = "Capacidade Usada: {{.Count}} instâncias ({{.Percent}}% utilizada)"
+other = "Capacidade Usada"
 
 # =============================================================================
 # TRUFFLE - COMANDO SPOT
