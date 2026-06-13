@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- i18n: removed stray `{{.Count}}`/`{{.Percent}}` template variables from eight
+  `truffle.capacity.summary.*` labels in the es/fr/de/ja/pt translations. The
+  truffle capacity command formats counts itself, so these strings supply only
+  the label; the leftover variables made `i18n.T` (called with no template data)
+  fall through to its error path and render `[truffle.capacity.summary.<key>]`
+  in non-English locales. English was already corrected.
+
 ## [0.37.0] - 2026-06-12
 
 ### Added
