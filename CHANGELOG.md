@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **catalog: container-based app model** (#290). `AppEntry` gains `Image`,
+  `TagDefault`, `TagsAvailable`, and `BaseAMIs` (region → shared `spore-dcv-base`
+  AMI). A containerized app runs `Image:tag` on the shared base AMI instead of a
+  baked per-app AMI. New helpers: `AppEntry.ResolveTag(requested)` (validates a
+  requested version against `TagsAvailable`, falling back to `TagDefault`) and
+  `AppEntry.Containerized()`. paraview and chimerax are now container entries.
+
+### Changed
+- **catalog: an app is launchable via a container image OR a `launch_command`**
+  (#290). GPU apps (paraview, chimerax) launch from their image CMD and no longer
+  set `launch_command`; CPU apps keep it until they are containerized.
+
+### Removed
+- **catalog: deleted the per-app, per-region baked AMI tables** (#389). Every ID
+  in them was found dangling or unshared from the launch account, and several were
+  duplicated across apps (a paraview launch outside us-east-1 would have booted the
+  chimerax image). The `amis` field remains on `AppEntry` for one release as a
+  deprecated, must-be-empty escape hatch; new entries use `image` + `base_amis`.
+
 ## [0.37.1] - 2026-06-12
 
 ### Fixed

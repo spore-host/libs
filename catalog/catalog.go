@@ -6,6 +6,7 @@ package catalog
 
 import (
 	_ "embed"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -44,9 +45,62 @@ type AppEntry struct {
 	Aliases []string `yaml:"aliases"`
 	// License describes the licensing model: "open-source", "commercial", "needs-conversation".
 	License string `yaml:"license"`
-	// AMIs maps AWS region to AMI ID. Empty until AMIs are built and published (#286).
+
+	// Container-based catalog (#290). The app ships as a Docker image pulled at
+	// launch onto a single shared DCV base AMI, instead of a baked per-app AMI —
+	// which removes the per-app-per-region AMI table that drifted into dangling
+	// and duplicated IDs (#389).
+
+	// Image is the container image (without tag) the app runs from, e.g.
+	// "public.ecr.aws/spore-host/paraview". Empty for a not-yet-containerized app.
+	Image string `yaml:"image"`
+	// TagDefault is the image tag launched when --app-version is not given (e.g. "5.13.2").
+	TagDefault string `yaml:"tag_default"`
+	// TagsAvailable lists the image tags a user may select via --app-version.
+	// Always includes TagDefault. Used to validate --app-version before launch.
+	TagsAvailable []string `yaml:"tags_available"`
+
+	// AMIs maps AWS region to a per-app baked AMI ID. DEPRECATED (#290): superseded
+	// by the shared base AMI (BaseAMIs) + Image. Retained one release so a stale
+	// consumer doesn't break; new entries must not set it. Every value here was
+	// found dangling/unshared from the launch account (#389) — do not trust it.
 	AMIs map[string]string `yaml:"amis"`
+	// BaseAMIs maps AWS region to the shared spore-dcv-base AMI ID (DCV + NVIDIA +
+	// Docker + NVIDIA Container Toolkit + spored). One image per region serves all
+	// container apps. Must be shared/visible to the launch account (#389 root cause).
+	BaseAMIs map[string]string `yaml:"base_amis"`
 }
+
+// ResolveTag returns the image tag to launch for the requested version: the
+// requested tag if it is allowed, TagDefault when requested is empty, or an
+// error naming the available tags. Pure, so the CLI validates --app-version
+// without any AWS calls (#290).
+func (e *AppEntry) ResolveTag(requested string) (string, error) {
+	if requested == "" {
+		if e.TagDefault == "" {
+			return "", fmt.Errorf("app %q has no default image tag", e.Name)
+		}
+		return e.TagDefault, nil
+	}
+	for _, t := range e.TagsAvailable {
+		if t == requested {
+			return requested, nil
+		}
+	}
+	// TagDefault is always implicitly available even if omitted from the list.
+	if requested == e.TagDefault {
+		return requested, nil
+	}
+	avail := e.TagsAvailable
+	if len(avail) == 0 && e.TagDefault != "" {
+		avail = []string{e.TagDefault}
+	}
+	return "", fmt.Errorf("version %q not available for %s (available: %s)", requested, e.Name, strings.Join(avail, ", "))
+}
+
+// Containerized reports whether the app launches from a container image (#290)
+// rather than a deprecated baked per-app AMI.
+func (e *AppEntry) Containerized() bool { return e.Image != "" }
 
 type catalogFile struct {
 	Apps []AppEntry `yaml:"apps"`
