@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.38.0] - 2026-06-26
+
 ### Added
 - **catalog: container-based app model** (#290). `AppEntry` gains `Image`,
   `TagDefault`, `TagsAvailable`, and `BaseAMIs` (region → shared `spore-dcv-base`
@@ -55,7 +57,8 @@ of this and earlier tags (`update`, `i18n`, `catalog`, `pricing` packages).
 
 ---
 
-[Unreleased]: https://github.com/spore-host/libs/compare/v0.37.1...HEAD
+[Unreleased]: https://github.com/spore-host/libs/compare/v0.38.0...HEAD
+[0.38.0]: https://github.com/spore-host/libs/compare/v0.37.1...v0.38.0
 [0.37.1]: https://github.com/spore-host/libs/compare/v0.37.0...v0.37.1
 [0.37.0]: https://github.com/spore-host/libs/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/spore-host/libs/releases/tag/v0.36.0
