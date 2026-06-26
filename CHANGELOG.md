@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **catalog: `Validate()` structural gate** (#290, #389). Returns one error per
+  catalog defect with no AWS calls — every app is launchable (image or
+  launch_command), no app reuses the deprecated per-app `amis` table, and each
+  container app has a `tag_default` within `tags_available` plus a non-empty
+  `base_amis`, with a unique image. Run in CI via the existing `go test ./...`
+  (`TestValidate_EmbeddedCatalogClean`), so a #389-class bad entry can't merge.
+  (ECR/AMI-visibility checks need AWS creds and live in a separate job.)
+
 ## [0.38.0] - 2026-06-26
 
 ### Added
