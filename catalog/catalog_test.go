@@ -149,3 +149,37 @@ func TestList_GPUAppsHaveVRAM(t *testing.T) {
 		}
 	}
 }
+
+func TestImageVisibility(t *testing.T) {
+	tests := []struct {
+		name  string
+		entry AppEntry
+		want  string
+	}{
+		{"public ECR inferred", AppEntry{Image: "public.ecr.aws/f8g1e7l5/paraview"}, VisibilityPublic},
+		{"private ECR inferred", AppEntry{Image: "123456789012.dkr.ecr.us-east-1.amazonaws.com/paraview"}, VisibilityPrivate},
+		{"dockerhub treated public", AppEntry{Image: "myorg/paraview"}, VisibilityPublic},
+		{"no image treated public", AppEntry{Image: ""}, VisibilityPublic},
+		{"explicit private overrides public-looking host", AppEntry{Image: "public.ecr.aws/x/y", Visibility: "private"}, VisibilityPrivate},
+		{"explicit public overrides private ECR host", AppEntry{Image: "123456789012.dkr.ecr.us-east-1.amazonaws.com/y", Visibility: "public"}, VisibilityPublic},
+		{"garbage visibility falls back to inference", AppEntry{Image: "123456789012.dkr.ecr.eu-west-1.amazonaws.com/y", Visibility: "bogus"}, VisibilityPrivate},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.entry.ImageVisibility(); got != tt.want {
+				t.Errorf("ImageVisibility() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEmbeddedCatalogIsPublic(t *testing.T) {
+	// The shipped global catalog must contain only public images (#392): a private
+	// image there would be unlaunchable for everyone but the owner.
+	for _, app := range List() {
+		if app.Containerized() && app.ImageVisibility() != VisibilityPublic {
+			t.Errorf("shipped catalog app %q has non-public image %q (%s) — private images belong in a local overlay (#392)",
+				app.Name, app.Image, app.ImageVisibility())
+		}
+	}
+}
