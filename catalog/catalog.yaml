@@ -9,8 +9,13 @@
 #
 # GPU base: spore-dcv-gpu-al2023 — DCV 2025.0.20103 + NVIDIA 595.71.05 + Docker +
 # NVIDIA Container Toolkit + spored, on AL2023. Built with
-# infra/amis/dcv-gpu-al2023.pkr.hcl (host account 812107987990) and shared to the
-# launch account. CPU base AMIs are TBD; CPU apps below are not yet containerized.
+# infra/amis/dcv-gpu-al2023.pkr.hcl in the build account (942542972736) and shared
+# to the launch account via share-base-ami.sh. CPU base AMIs are TBD; CPU apps
+# below are not yet containerized.
+#
+# Images live under public.ecr.aws/f8g1e7l5 — the build account's default ECR
+# Public alias. (A custom "spore-host" alias needs an async AWS approval; switch
+# the image: prefixes if/when it's granted.)
 
 # Shared GPU DCV base AMIs (one per region serves every GPU container app).
 gpu_base_amis: &gpu_base_amis
@@ -38,9 +43,9 @@ apps:
     idle_timeout_default: 20m
     aliases: [pv]
     license: open-source
-    # Containerized (#290): runs public.ecr.aws/spore-host/paraview:<tag> on the
+    # Containerized (#290): runs public.ecr.aws/f8g1e7l5/paraview:<tag> on the
     # shared GPU base AMI. The image CMD launches ParaView into the DCV display.
-    image: public.ecr.aws/spore-host/paraview
+    image: public.ecr.aws/f8g1e7l5/paraview
     tag_default: "5.13.2"
     tags_available: ["5.13.2"]
     base_amis: *gpu_base_amis
@@ -58,7 +63,7 @@ apps:
     aliases: [chimera]
     license: open-source
     # base AMI is ready; container image pending (Phase E migration, #290).
-    image: public.ecr.aws/spore-host/chimerax
+    image: public.ecr.aws/f8g1e7l5/chimerax
     tag_default: "1.8"
     tags_available: ["1.8"]
     base_amis: *gpu_base_amis

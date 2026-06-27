@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **catalog: point app images at the real ECR Public registry** (#290). The
+  paraview/chimerax `image:` prefixes are now `public.ecr.aws/f8g1e7l5/…` (the
+  build account's default ECR Public alias) instead of the aspirational
+  `public.ecr.aws/spore-host/…`, which does not resolve (a custom alias needs an
+  async AWS approval). `paraview:5.13.2` is published and publicly pullable; the
+  base AMI note now reflects the real owning account (942542972736).
+
 ## [0.39.0] - 2026-06-26
 
 ### Added
