@@ -1,7 +1,12 @@
 // Package catalog provides the spore.host application catalog — a registry of
-// streamable research applications with their hardware requirements and AMI IDs.
-// Both truffle (hardware discovery) and spawn (instance launch) import this package
-// to resolve application names to EC2 configuration.
+// streamable research applications with their hardware requirements and container
+// image bindings. Both truffle (hardware discovery) and spawn (instance launch)
+// import this package to resolve application names to EC2 configuration.
+//
+// The embedded catalog.yaml is the global, public baseline shipped to every
+// consumer. A user can layer a local overlay (see overlay.go) to add their own
+// apps or rebind an app's image to one they host — the only place private images
+// belong (BYO-image model, #392).
 package catalog
 
 import (
@@ -154,37 +159,82 @@ type catalogFile struct {
 }
 
 var (
-	once      sync.Once
-	byName    map[string]*AppEntry // canonical name → entry
-	byAlias   map[string]*AppEntry // alias → entry (includes canonical names)
-	allSorted []AppEntry
+	mu         sync.Mutex
+	loaded     bool
+	byName     map[string]*AppEntry // canonical name → entry
+	byAlias    map[string]*AppEntry // alias → entry (includes canonical names)
+	allSorted  []AppEntry
+	overlayErr error // non-fatal error from loading the user overlay, if any
 )
 
+// load builds the catalog on first use (lazily). Subsequent calls are no-ops
+// until Reload forces a rebuild.
 func load() {
-	once.Do(func() {
-		var f catalogFile
-		if err := yaml.Unmarshal(catalogData, &f); err != nil {
-			panic("catalog: failed to parse catalog.yaml: " + err.Error())
-		}
+	mu.Lock()
+	defer mu.Unlock()
+	if !loaded {
+		build()
+		loaded = true
+	}
+}
 
-		// Sort first, then build maps so pointer addresses are stable.
-		allSorted = make([]AppEntry, len(f.Apps))
-		copy(allSorted, f.Apps)
-		sort.Slice(allSorted, func(i, j int) bool {
-			return allSorted[i].Name < allSorted[j].Name
-		})
+// build parses the embedded catalog, merges the user overlay (if any), and
+// (re)builds the lookup maps. Caller must hold mu.
+func build() {
+	var f catalogFile
+	if err := yaml.Unmarshal(catalogData, &f); err != nil {
+		panic("catalog: failed to parse catalog.yaml: " + err.Error())
+	}
 
-		byName = make(map[string]*AppEntry, len(allSorted))
-		byAlias = make(map[string]*AppEntry)
-		for i := range allSorted {
-			e := &allSorted[i]
-			byName[e.Name] = e
-			byAlias[e.Name] = e
-			for _, a := range e.Aliases {
-				byAlias[strings.ToLower(a)] = e
-			}
-		}
+	apps := f.Apps
+	// Merge the user overlay on top of the embedded catalog (BYO model, #392).
+	// A bad overlay is non-fatal: record the error and fall back to embedded-only
+	// so the tool still works; callers can surface it via LoadError.
+	overlayErr = nil
+	if ov, err := loadOverlayApps(); err != nil {
+		overlayErr = err
+	} else if len(ov) > 0 {
+		apps = mergeApps(apps, ov)
+	}
+
+	// Sort first, then build maps so pointer addresses are stable.
+	allSorted = make([]AppEntry, len(apps))
+	copy(allSorted, apps)
+	sort.Slice(allSorted, func(i, j int) bool {
+		return allSorted[i].Name < allSorted[j].Name
 	})
+
+	byName = make(map[string]*AppEntry, len(allSorted))
+	byAlias = make(map[string]*AppEntry)
+	for i := range allSorted {
+		e := &allSorted[i]
+		byName[e.Name] = e
+		byAlias[e.Name] = e
+		for _, a := range e.Aliases {
+			byAlias[strings.ToLower(a)] = e
+		}
+	}
+}
+
+// Reload rebuilds the catalog, re-reading the user overlay. Call it after
+// SetOverlayPath (e.g. once a --catalog flag is parsed). Not safe to call
+// concurrently with in-flight Lookup/List; callers should Reload during startup
+// before serving.
+func Reload() {
+	mu.Lock()
+	defer mu.Unlock()
+	build()
+	loaded = true
+}
+
+// LoadError returns any non-fatal error encountered loading the user overlay on
+// the last build (nil if the overlay was absent or valid). The embedded catalog
+// is always available regardless.
+func LoadError() error {
+	load()
+	mu.Lock()
+	defer mu.Unlock()
+	return overlayErr
 }
 
 // Lookup returns the AppEntry for name (canonical name or alias), case-insensitive.
