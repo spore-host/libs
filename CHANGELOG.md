@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.40.0] - 2026-06-27
+
 ### Added
 - **catalog: image `visibility` (public/private) + inference** (BYO-image model,
   spore-host#392). New `AppEntry.Visibility` field and `ImageVisibility()`
@@ -106,7 +108,8 @@ of this and earlier tags (`update`, `i18n`, `catalog`, `pricing` packages).
 
 ---
 
-[Unreleased]: https://github.com/spore-host/libs/compare/v0.39.2...HEAD
+[Unreleased]: https://github.com/spore-host/libs/compare/v0.40.0...HEAD
+[0.40.0]: https://github.com/spore-host/libs/compare/v0.39.2...v0.40.0
 [0.39.2]: https://github.com/spore-host/libs/compare/v0.39.1...v0.39.2
 [0.39.1]: https://github.com/spore-host/libs/compare/v0.39.0...v0.39.1
 [0.39.0]: https://github.com/spore-host/libs/compare/v0.38.0...v0.39.0
