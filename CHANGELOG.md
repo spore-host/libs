@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.39.1] - 2026-06-26
+
 ### Fixed
 - **catalog: point app images at the real ECR Public registry** (#290). The
   paraview/chimerax `image:` prefixes are now `public.ecr.aws/f8g1e7l5/…` (the
@@ -76,7 +78,8 @@ of this and earlier tags (`update`, `i18n`, `catalog`, `pricing` packages).
 
 ---
 
-[Unreleased]: https://github.com/spore-host/libs/compare/v0.39.0...HEAD
+[Unreleased]: https://github.com/spore-host/libs/compare/v0.39.1...HEAD
+[0.39.1]: https://github.com/spore-host/libs/compare/v0.39.0...v0.39.1
 [0.39.0]: https://github.com/spore-host/libs/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/spore-host/libs/compare/v0.37.1...v0.38.0
 [0.37.1]: https://github.com/spore-host/libs/compare/v0.37.0...v0.37.1
