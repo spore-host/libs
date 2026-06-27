@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **catalog: chimerax bumped to 1.12** (#290). 1.8 no longer exists on UCSF's
+  download site; 1.12 is the current production release. The image must still be
+  built/pushed (ChimeraX has a license-gated download — see
+  infra/amis/containers/chimerax), so a chimerax launch isn't functional until
+  that image is published.
+
 ## [0.39.1] - 2026-06-26
 
 ### Fixed
