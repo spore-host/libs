@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.39.2] - 2026-06-27
+
 ### Changed
 - **catalog: chimerax bumped to 1.12** (#290). 1.8 no longer exists on UCSF's
   download site; 1.12 is the current production release. The image must still be
@@ -85,7 +87,8 @@ of this and earlier tags (`update`, `i18n`, `catalog`, `pricing` packages).
 
 ---
 
-[Unreleased]: https://github.com/spore-host/libs/compare/v0.39.1...HEAD
+[Unreleased]: https://github.com/spore-host/libs/compare/v0.39.2...HEAD
+[0.39.2]: https://github.com/spore-host/libs/compare/v0.39.1...v0.39.2
 [0.39.1]: https://github.com/spore-host/libs/compare/v0.39.0...v0.39.1
 [0.39.0]: https://github.com/spore-host/libs/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/spore-host/libs/compare/v0.37.1...v0.38.0
