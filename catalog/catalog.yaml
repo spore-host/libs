@@ -64,8 +64,8 @@ apps:
     license: open-source
     # base AMI is ready; container image pending (Phase E migration, #290).
     image: public.ecr.aws/f8g1e7l5/chimerax
-    tag_default: "1.8"
-    tags_available: ["1.8"]
+    tag_default: "1.12"
+    tags_available: ["1.12"]
     base_amis: *gpu_base_amis
 
   - name: igv
