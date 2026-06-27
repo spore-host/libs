@@ -59,6 +59,12 @@ type AppEntry struct {
 	// TagsAvailable lists the image tags a user may select via --app-version.
 	// Always includes TagDefault. Used to validate --app-version before launch.
 	TagsAvailable []string `yaml:"tags_available"`
+	// Visibility is "public" (anonymously pullable by any account) or "private"
+	// (needs registry auth + a cross-account grant). When empty it is inferred
+	// from Image (see ImageVisibility). spore.host ships only public images in the
+	// global catalog; private images come from a user's local overlay and are
+	// listed/launchable only for accounts that can pull them (BYO model, #392).
+	Visibility string `yaml:"visibility"`
 
 	// AMIs maps AWS region to a per-app baked AMI ID. DEPRECATED (#290): superseded
 	// by the shared base AMI (BaseAMIs) + Image. Retained one release so a stale
@@ -101,6 +107,47 @@ func (e *AppEntry) ResolveTag(requested string) (string, error) {
 // Containerized reports whether the app launches from a container image (#290)
 // rather than a deprecated baked per-app AMI.
 func (e *AppEntry) Containerized() bool { return e.Image != "" }
+
+// Image visibility values (the BYO-image model, #392).
+const (
+	VisibilityPublic  = "public"  // anonymously pullable by any account
+	VisibilityPrivate = "private" // needs registry auth + a cross-account grant
+)
+
+// ImageVisibility returns the effective visibility of the app's image: the
+// explicit Visibility if set, otherwise inferred from the registry host —
+// public.ecr.aws/* is public, an *.dkr.ecr.<region>.amazonaws.com/* (private
+// ECR) registry is private. Anything else (other registries, no image) is
+// treated as public, the safe default for the launchability filter: a public
+// guess that turns out unpullable is caught at launch, whereas a wrong "private"
+// guess would hide a launchable app. Used by the per-account list/launch filter
+// (#392) — public images list everywhere; private images list only for accounts
+// that can pull them.
+func (e *AppEntry) ImageVisibility() string {
+	switch e.Visibility {
+	case VisibilityPublic, VisibilityPrivate:
+		return e.Visibility
+	}
+	if isPrivateRegistry(e.Image) {
+		return VisibilityPrivate
+	}
+	return VisibilityPublic
+}
+
+// isPrivateRegistry reports whether an image ref names a private registry that
+// requires authentication. Currently recognizes private ECR
+// (<account>.dkr.ecr.<region>.amazonaws.com); public.ecr.aws and other hosts are
+// treated as public.
+func isPrivateRegistry(image string) bool {
+	if image == "" {
+		return false
+	}
+	host := image
+	if i := strings.IndexByte(host, '/'); i >= 0 {
+		host = host[:i]
+	}
+	return strings.Contains(host, ".dkr.ecr.") && strings.HasSuffix(host, ".amazonaws.com")
+}
 
 type catalogFile struct {
 	Apps []AppEntry `yaml:"apps"`

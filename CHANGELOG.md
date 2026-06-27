@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **catalog: image `visibility` (public/private) + inference** (BYO-image model,
+  spore-host#392). New `AppEntry.Visibility` field and `ImageVisibility()`
+  accessor: explicit value wins, else inferred from the registry
+  (`public.ecr.aws/*` → public, private-ECR `*.dkr.ecr.*.amazonaws.com/*` →
+  private, everything else → public). This underpins the per-account
+  list/launch filter — public images surface for everyone, private images only
+  for accounts that can pull them. `Validate()` now also rejects any non-public
+  image in the shipped catalog (private images belong in a user's local overlay).
+
 ## [0.39.2] - 2026-06-27
 
 ### Changed

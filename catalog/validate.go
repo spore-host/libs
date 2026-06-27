@@ -22,7 +22,21 @@ import (
 //   - that each Image:tag actually resolves in ECR;
 //   - that each BaseAMIs entry is launch-visible from the launch account.
 func Validate() []error {
-	return validateApps(List())
+	apps := List()
+	errs := validateApps(apps)
+	// The shipped/global catalog must contain only PUBLIC images (#392): a private
+	// image here is unlaunchable for everyone but its owner, so it has no place in
+	// the artifact shipped to all consumers. Private images belong in a user's
+	// local overlay. (This is the offline half; online resolvability is a separate
+	// authenticated CI gate, libs#18.) validateApps stays overlay-safe — it does
+	// NOT enforce this, since overlays legitimately carry private images.
+	for _, app := range apps {
+		if app.Containerized() && app.ImageVisibility() != VisibilityPublic {
+			errs = append(errs, fmt.Errorf("%s: image %q is %s — the shipped catalog must be public; put private images in a local overlay (#392)",
+				app.Name, app.Image, app.ImageVisibility()))
+		}
+	}
+	return errs
 }
 
 // validateApps is the pure core of Validate, taking the app list explicitly so
