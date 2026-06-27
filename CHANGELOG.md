@@ -17,6 +17,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   list/launch filter — public images surface for everyone, private images only
   for accounts that can pull them. `Validate()` now also rejects any non-public
   image in the shipped catalog (private images belong in a user's local overlay).
+- **catalog: local overlay** (BYO-image model, spore-host#392). The embedded
+  catalog can now be layered with a user overlay that adds apps or rebinds an
+  existing app's image to one the user hosts (the only place private images
+  belong). Path precedence: `SetOverlayPath` (e.g. a `--catalog` flag) >
+  `$SPAWN_CATALOG` > `~/.spawn/catalog.yaml`; a missing default/env file is fine
+  (opt-in), a malformed or explicitly-named-but-missing file is reported via the
+  new `LoadError()` and falls back to embedded-only. New `SetOverlayPath`,
+  `Reload`, and `LoadError`; overlay entries merge by name (overlay wins,
+  case-insensitive) over the embedded baseline.
 
 ## [0.39.2] - 2026-06-27
 
