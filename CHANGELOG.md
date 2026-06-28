@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.41.1] - 2026-06-28
+
 ### Fixed
 - **catalog: overlay rebind now field-merges instead of replacing** (spore-host#392).
   An overlay entry that rebinds an existing app (e.g. supplying just an `image`)
@@ -142,7 +144,8 @@ of this and earlier tags (`update`, `i18n`, `catalog`, `pricing` packages).
 
 ---
 
-[Unreleased]: https://github.com/spore-host/libs/compare/v0.41.0...HEAD
+[Unreleased]: https://github.com/spore-host/libs/compare/v0.41.1...HEAD
+[0.41.1]: https://github.com/spore-host/libs/compare/v0.41.0...v0.41.1
 [0.41.0]: https://github.com/spore-host/libs/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/spore-host/libs/compare/v0.39.2...v0.40.0
 [0.39.2]: https://github.com/spore-host/libs/compare/v0.39.1...v0.39.2
