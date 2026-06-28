@@ -34,7 +34,12 @@ jobs:
           cache: false
 
       - name: Test
-        run: go test -coverprofile=coverage.out ./...
+        # -tags online runs the catalog resolvability gate (libs#18) as part of
+        # the suite, so its registry-probe code is exercised + counted toward
+        # coverage. A dead/private/wrong image ref in the shipped catalog fails
+        # here. (The `online` tag is omitted from local `go test` so dev runs stay
+        # offline; CI always has network.)
+        run: go test -tags online -coverprofile=coverage.out ./...
 
       - name: Coverage gate
         env:
