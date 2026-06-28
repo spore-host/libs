@@ -22,6 +22,10 @@ import (
 // hung registry can't stall CI indefinitely.
 var resolveHTTPClient = &http.Client{Timeout: 20 * time.Second}
 
+// resolveScheme is the URL scheme for registry probes — "https" in production;
+// tests point it at an httptest server over "http".
+var resolveScheme = "https"
+
 // bearerChallengeRe pulls realm/service/scope out of a WWW-Authenticate header.
 var bearerParamRe = regexp.MustCompile(`(\w+)="([^"]*)"`)
 
@@ -62,7 +66,7 @@ func headManifest(image, tag string) error {
 	if err != nil {
 		return err
 	}
-	url := fmt.Sprintf("https://%s/v2/%s/manifests/%s", host, repo, tag)
+	url := fmt.Sprintf("%s://%s/v2/%s/manifests/%s", resolveScheme, host, repo, tag)
 
 	resp, status, err := doManifestHead(url, "")
 	if err != nil {

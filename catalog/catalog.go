@@ -70,6 +70,13 @@ type AppEntry struct {
 	// global catalog; private images come from a user's local overlay and are
 	// listed/launchable only for accounts that can pull them (BYO model, #392).
 	Visibility string `yaml:"visibility"`
+	// Recipe points at the PUBLIC build instructions for this app's image — the
+	// "recipe" half of the recipe/cake split (#392). spore.host ships the recipe
+	// (e.g. "infra/amis/containers/paraview", a path in the spore-host repo);
+	// anyone can bake the image and bind it via a local overlay. An entry with a
+	// Recipe but no Image is a buildable *definition*, shown as "recipe available"
+	// rather than launchable.
+	Recipe string `yaml:"recipe"`
 
 	// AMIs maps AWS region to a per-app baked AMI ID. DEPRECATED (#290): superseded
 	// by the shared base AMI (BaseAMIs) + Image. Retained one release so a stale
@@ -112,6 +119,14 @@ func (e *AppEntry) ResolveTag(requested string) (string, error) {
 // Containerized reports whether the app launches from a container image (#290)
 // rather than a deprecated baked per-app AMI.
 func (e *AppEntry) Containerized() bool { return e.Image != "" }
+
+// RecipeOnly reports whether the app is a buildable definition with no bound
+// image — it ships a public Recipe but no Image (and no legacy LaunchCommand),
+// so it's "recipe available" rather than launchable until a user binds a built
+// image via a local overlay or --image (#392).
+func (e *AppEntry) RecipeOnly() bool {
+	return e.Image == "" && e.LaunchCommand == "" && e.Recipe != ""
+}
 
 // Image visibility values (the BYO-image model, #392).
 const (
