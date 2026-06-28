@@ -34,7 +34,12 @@ jobs:
           cache: false
 
       - name: Test
-        run: go test -coverprofile=coverage.out ./...
+        # -tags online runs the catalog resolvability gate (libs#18) as part of
+        # the suite, so its registry-probe code is exercised + counted toward
+        # coverage. A dead/private/wrong image ref in the shipped catalog fails
+        # here. (The `online` tag is omitted from local `go test` so dev runs stay
+        # offline; CI always has network.)
+        run: go test -tags online -coverprofile=coverage.out ./...
 
       - name: Coverage gate
         env:
@@ -55,10 +60,3 @@ jobs:
 
       - name: Vet
         run: go vet ./...
-
-      # Online catalog gate (libs#18, spore-host#392): the shipped catalog must
-      # reference only public, anonymously-pullable images, so a dead/private
-      # global ref can't merge. Network-dependent, so it's behind the `online`
-      # build tag (kept out of the default `go test`) and run as its own step.
-      - name: Catalog image resolvability (online)
-        run: go test -tags online ./catalog/ -run TestEmbeddedCatalogImagesAreAnonymouslyPullable -v
