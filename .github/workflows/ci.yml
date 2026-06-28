@@ -55,3 +55,10 @@ jobs:
 
       - name: Vet
         run: go vet ./...
+
+      # Online catalog gate (libs#18, spore-host#392): the shipped catalog must
+      # reference only public, anonymously-pullable images, so a dead/private
+      # global ref can't merge. Network-dependent, so it's behind the `online`
+      # build tag (kept out of the default `go test`) and run as its own step.
+      - name: Catalog image resolvability (online)
+        run: go test -tags online ./catalog/ -run TestEmbeddedCatalogImagesAreAnonymouslyPullable -v

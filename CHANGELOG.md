@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **catalog: online public-resolvability gate** (BYO-image model, spore-host#392).
+  New `ResolvePublicImages()` anonymously HEAD-checks each shipped container
+  image's manifest via the OCI registry v2 API (following the standard Bearer
+  challenge — no Docker, no creds), rejecting any image that is private or not
+  anonymously pullable. Wired into CI behind the `online` build tag (`go test
+  -tags online ./catalog/`) so a dead/private/wrong-tag ref in the global catalog
+  fails CI — the gap that let `chimerax:1.8` and dangling AMIs through before.
+
 ## [0.40.0] - 2026-06-27
 
 ### Added
