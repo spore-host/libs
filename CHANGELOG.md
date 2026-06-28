@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **catalog: overlay rebind now field-merges instead of replacing** (spore-host#392).
+  An overlay entry that rebinds an existing app (e.g. supplying just an `image`)
+  previously REPLACED the whole entry, blanking the app's description, GPU,
+  families, etc. It now merges field-by-field: non-zero overlay fields override,
+  unset fields inherit from the built-in definition. New apps in the overlay are
+  still added as-is.
+
 ## [0.41.0] - 2026-06-28
 
 ### Added
