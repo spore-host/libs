@@ -39,6 +39,35 @@ func TestMergeApps(t *testing.T) {
 	}
 }
 
+func TestMergeApps_InheritsUnsetFields(t *testing.T) {
+	// A recipe-only base entry with a full definition; the overlay supplies ONLY
+	// an image binding. The merged entry must keep the base's description, GPU,
+	// families, etc. (the bug: wholesale replace blanked them).
+	base := []AppEntry{{
+		Name: "paraview", Description: "Scientific visualization", GPU: true,
+		MinVRAMGiB: 24, InstanceFamilies: []string{"g6", "g5"},
+		Recipe: "infra/amis/containers/paraview", DCVEnabled: true,
+		BaseAMIs: map[string]string{"us-east-1": "ami-1"},
+	}}
+	over := []AppEntry{{
+		Name: "paraview", Image: "942.dkr.ecr.us-east-1.amazonaws.com/paraview", TagDefault: "5.13.2",
+	}}
+	got := mergeApps(base, over)
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1", len(got))
+	}
+	m := got[0]
+	if m.Image != "942.dkr.ecr.us-east-1.amazonaws.com/paraview" || m.TagDefault != "5.13.2" {
+		t.Errorf("overlay image/tag not applied: %q %q", m.Image, m.TagDefault)
+	}
+	if m.Description != "Scientific visualization" || !m.GPU || m.MinVRAMGiB != 24 || len(m.InstanceFamilies) != 2 || !m.DCVEnabled {
+		t.Errorf("base definition fields not inherited: %+v", m)
+	}
+	if m.BaseAMIs["us-east-1"] != "ami-1" {
+		t.Errorf("base_amis not inherited: %v", m.BaseAMIs)
+	}
+}
+
 func TestMergeApps_CaseInsensitiveName(t *testing.T) {
 	base := []AppEntry{{Name: "ParaView", Image: "public.ecr.aws/x/pv"}}
 	over := []AppEntry{{Name: "paraview", Image: "public.ecr.aws/me/pv"}}

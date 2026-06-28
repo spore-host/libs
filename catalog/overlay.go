@@ -84,10 +84,11 @@ func loadOverlayApps() ([]AppEntry, error) {
 }
 
 // mergeApps overlays `over` onto `base`, returning a new slice. An overlay entry
-// whose Name matches a base entry REPLACES it wholesale (the overlay owns that
-// app's definition + image binding); an overlay entry with a new Name is
-// appended. Pure — unit-tested without the filesystem. Order is not significant
-// (the caller sorts).
+// whose Name matches a base entry is FIELD-MERGED onto it: each non-zero overlay
+// field overrides the base, and unset overlay fields inherit the base value — so
+// binding just an image to a recipe-only app keeps the app's description, GPU,
+// families, etc. An overlay entry with a new Name is appended as-is. Pure —
+// unit-tested without the filesystem. Order is not significant (caller sorts).
 func mergeApps(base, over []AppEntry) []AppEntry {
 	idx := make(map[string]int, len(base)) // lowercased name → index in result
 	out := make([]AppEntry, len(base))
@@ -97,11 +98,79 @@ func mergeApps(base, over []AppEntry) []AppEntry {
 	}
 	for _, e := range over {
 		if i, ok := idx[strings.ToLower(e.Name)]; ok {
-			out[i] = e // overlay wins
+			out[i] = mergeEntry(out[i], e)
 		} else {
 			idx[strings.ToLower(e.Name)] = len(out)
 			out = append(out, e)
 		}
 	}
 	return out
+}
+
+// mergeEntry returns base with every non-zero field of over applied on top.
+// Used when an overlay rebinds an existing app: the overlay typically supplies
+// just an image binding, and the rest of the definition is inherited.
+//
+// Note: binding an image clears the recipe-only state via Image, but a rebind
+// does NOT auto-clear a stale Recipe pointer (harmless — it's just a doc link).
+func mergeEntry(base, over AppEntry) AppEntry {
+	m := base
+	if over.Description != "" {
+		m.Description = over.Description
+	}
+	if over.InstanceFamilies != nil {
+		m.InstanceFamilies = over.InstanceFamilies
+	}
+	if over.HighVRAMFamilies != nil {
+		m.HighVRAMFamilies = over.HighVRAMFamilies
+	}
+	if over.MinVCPUs != 0 {
+		m.MinVCPUs = over.MinVCPUs
+	}
+	if over.MinMemoryGiB != 0 {
+		m.MinMemoryGiB = over.MinMemoryGiB
+	}
+	if over.GPU {
+		m.GPU = over.GPU
+	}
+	if over.MinVRAMGiB != 0 {
+		m.MinVRAMGiB = over.MinVRAMGiB
+	}
+	if over.DCVEnabled {
+		m.DCVEnabled = over.DCVEnabled
+	}
+	if over.IdleTimeoutDefault != "" {
+		m.IdleTimeoutDefault = over.IdleTimeoutDefault
+	}
+	if over.LaunchCommand != "" {
+		m.LaunchCommand = over.LaunchCommand
+	}
+	if over.Aliases != nil {
+		m.Aliases = over.Aliases
+	}
+	if over.License != "" {
+		m.License = over.License
+	}
+	if over.Image != "" {
+		m.Image = over.Image
+	}
+	if over.TagDefault != "" {
+		m.TagDefault = over.TagDefault
+	}
+	if over.TagsAvailable != nil {
+		m.TagsAvailable = over.TagsAvailable
+	}
+	if over.Visibility != "" {
+		m.Visibility = over.Visibility
+	}
+	if over.Recipe != "" {
+		m.Recipe = over.Recipe
+	}
+	if over.AMIs != nil {
+		m.AMIs = over.AMIs
+	}
+	if over.BaseAMIs != nil {
+		m.BaseAMIs = over.BaseAMIs
+	}
+	return m
 }
