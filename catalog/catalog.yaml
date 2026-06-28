@@ -43,11 +43,11 @@ apps:
     idle_timeout_default: 20m
     aliases: [pv]
     license: open-source
-    # Containerized (#290): runs public.ecr.aws/f8g1e7l5/paraview:<tag> on the
-    # shared GPU base AMI. The image CMD launches ParaView into the DCV display.
-    image: public.ecr.aws/f8g1e7l5/paraview
-    tag_default: "5.13.2"
-    tags_available: ["5.13.2"]
+    # Recipe, not cake (#392): spore.host ships the public build recipe; the
+    # actual image is BYO. Build with infra/amis/containers/build-push.sh and bind
+    # it in ~/.spawn/catalog.yaml (image:/tag_default:), or launch with --image.
+    # base_amis stays here — the shared DCV base AMI is needed once a cake is bound.
+    recipe: infra/amis/containers/paraview
     base_amis: *gpu_base_amis
 
   - name: chimerax
@@ -62,10 +62,9 @@ apps:
     idle_timeout_default: 20m
     aliases: [chimera]
     license: open-source
-    # base AMI is ready; container image pending (Phase E migration, #290).
-    image: public.ecr.aws/f8g1e7l5/chimerax
-    tag_default: "1.12"
-    tags_available: ["1.12"]
+    # Recipe, not cake (#392). ChimeraX also has a license-gated download — the
+    # recipe (infra/amis/containers/chimerax) documents the human .deb step.
+    recipe: infra/amis/containers/chimerax
     base_amis: *gpu_base_amis
 
   - name: igv

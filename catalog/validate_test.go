@@ -24,9 +24,9 @@ func TestValidateApps_CatchesDefects(t *testing.T) {
 		wantSub string // substring expected in the (single) error
 	}{
 		{
-			name:    "not launchable",
+			name:    "not usable (no image/command/recipe)",
 			apps:    []AppEntry{{Name: "x"}},
-			wantSub: "not launchable",
+			wantSub: "not usable",
 		},
 		{
 			name:    "deprecated per-app amis (#389)",
@@ -83,7 +83,8 @@ func TestValidateApps_AcceptsGoodEntries(t *testing.T) {
 	base := map[string]string{"us-east-1": "ami-123"}
 	apps := []AppEntry{
 		{Name: "paraview", Image: "ecr/paraview", TagDefault: "5.13.2", TagsAvailable: []string{"5.13.2"}, BaseAMIs: base},
-		{Name: "igv", LaunchCommand: "/opt/igv/igv.sh"}, // legacy CPU app, still valid
+		{Name: "igv", LaunchCommand: "/opt/igv/igv.sh"},                              // legacy CPU app, still valid
+		{Name: "chimerax", Recipe: "infra/amis/containers/chimerax", BaseAMIs: base}, // recipe-only definition (#392)
 	}
 	if errs := validateApps(apps); len(errs) != 0 {
 		t.Errorf("valid apps reported errors: %v", errs)

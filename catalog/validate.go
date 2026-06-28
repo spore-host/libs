@@ -46,8 +46,8 @@ func validateApps(apps []AppEntry) []error {
 	images := map[string]string{} // image → first app that used it
 
 	for _, app := range apps {
-		if app.Image == "" && app.LaunchCommand == "" {
-			errs = append(errs, fmt.Errorf("%s: not launchable (no image and no launch_command)", app.Name))
+		if app.Image == "" && app.LaunchCommand == "" && app.Recipe == "" {
+			errs = append(errs, fmt.Errorf("%s: not usable (no image, no launch_command, no recipe)", app.Name))
 		}
 		if len(app.AMIs) != 0 {
 			errs = append(errs, fmt.Errorf("%s: uses the deprecated per-app amis table (%v) — use image + base_amis (#389)", app.Name, sortedKeys(app.AMIs)))

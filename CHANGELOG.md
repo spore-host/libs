@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **catalog: `recipe` field — public recipe, private cake** (spore-host#392). An
+  app can ship a public build-instructions pointer (`recipe:`, e.g.
+  `infra/amis/containers/paraview`) without a bound image. Such a "recipe-only"
+  entry (`AppEntry.RecipeOnly()`) is a buildable definition — anyone can bake the
+  image and bind it via a local overlay or `--image`. `Validate()` accepts
+  recipe-only entries as usable.
+
+### Changed
+- **catalog: paraview and chimerax are now recipe-only** (spore-host#392).
+  Their image bindings were removed from the shipped catalog (they pointed at a
+  personal account's public ECR). spore.host ships the recipe; the image is BYO —
+  build it (`infra/amis/containers/<app>`) and bind it in `~/.spawn/catalog.yaml`
+  or pass `--image`. `base_amis` stays so a bound image launches on the shared
+  DCV base AMI.
+
 - **catalog: online public-resolvability gate** (BYO-image model, spore-host#392).
   New `ResolvePublicImages()` anonymously HEAD-checks each shipped container
   image's manifest via the OCI registry v2 API (following the standard Bearer
