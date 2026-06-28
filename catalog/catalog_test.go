@@ -72,13 +72,13 @@ func TestList_Sorted(t *testing.T) {
 	}
 }
 
-// TestList_AllLaunchable asserts every app is launchable by exactly one model:
-// a container image (CMD launches the app, #290) or a legacy launch_command
-// (baked AMI). An app with neither can't be launched.
-func TestList_AllLaunchable(t *testing.T) {
+// TestList_AppsUsable asserts every shipped app is usable by one of the three
+// models: a container image (launchable), a legacy launch_command (baked AMI),
+// or a public recipe (buildable definition — recipe/cake split, #392).
+func TestList_AppsUsable(t *testing.T) {
 	for _, app := range List() {
-		if app.Image == "" && app.LaunchCommand == "" {
-			t.Errorf("app %q has neither image (container) nor launch_command (baked AMI)", app.Name)
+		if app.Image == "" && app.LaunchCommand == "" && app.Recipe == "" {
+			t.Errorf("app %q has no image, launch_command, or recipe", app.Name)
 		}
 	}
 }
@@ -180,6 +180,38 @@ func TestEmbeddedCatalogIsPublic(t *testing.T) {
 		if app.Containerized() && app.ImageVisibility() != VisibilityPublic {
 			t.Errorf("shipped catalog app %q has non-public image %q (%s) — private images belong in a local overlay (#392)",
 				app.Name, app.Image, app.ImageVisibility())
+		}
+	}
+}
+
+func TestRecipeOnly(t *testing.T) {
+	cases := []struct {
+		name string
+		e    AppEntry
+		want bool
+	}{
+		{"recipe no image", AppEntry{Recipe: "infra/x"}, true},
+		{"image present", AppEntry{Recipe: "infra/x", Image: "ecr/x"}, false},
+		{"launch command present", AppEntry{Recipe: "infra/x", LaunchCommand: "/x"}, false},
+		{"no recipe", AppEntry{}, false},
+	}
+	for _, c := range cases {
+		if got := c.e.RecipeOnly(); got != c.want {
+			t.Errorf("%s: RecipeOnly() = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestEmbeddedParaviewIsRecipeOnly(t *testing.T) {
+	// After the recipe/cake cutover (#392) the shipped paraview/chimerax carry a
+	// public recipe and no image — launchable only via a user overlay/--image.
+	for _, name := range []string{"paraview", "chimerax"} {
+		e, ok := Lookup(name)
+		if !ok {
+			t.Fatalf("%s missing from catalog", name)
+		}
+		if !e.RecipeOnly() {
+			t.Errorf("%s should be recipe-only in the shipped catalog (image=%q recipe=%q)", name, e.Image, e.Recipe)
 		}
 	}
 }
