@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **New `sporeconfig` package** — the shared configuration base for the
+  spore.host suite (spawn, truffle, lagotto, spore-host-mcp). `Resolve(Flags)`
+  returns the common AWS `Profile`/`Region`/`Account` and default `Output` using
+  a single precedence order — **flag > env > file > default** — so every tool
+  resolves them the same way instead of each reinventing it. Reads `SPORE_*`
+  (and `AWS_PROFILE`/`AWS_REGION`/`AWS_DEFAULT_REGION` as fallbacks) and the
+  `[spore]` table of `~/.config/spore/config.toml` (XDG-aware via
+  `ConfigDir`/`ConfigPath`). Deliberately **SDK-free**: it resolves strings only;
+  each tool turns them into an `aws.Config` itself, and an unset value means
+  "use the ambient AWS chain" so an unconfigured suite behaves exactly as before.
+  A missing config file is not an error (opt-in); a malformed one is reported but
+  the flag/env/default layers still resolve.
+
 ## [0.41.1] - 2026-06-28
 
 ### Fixed
