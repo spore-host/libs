@@ -30,6 +30,9 @@ func buildTree() *cobra.Command {
 	// former must be HTML-escaped (VitePress runs markdown through Vue), the latter
 	// must be left literal inside the code span.
 	launch.Flags().String("dest", "", "path like <bucket>/key (default: `s3://b/<id>`)")
+	// A flag whose usage carries a Vue mustache — must be neutralized so VitePress
+	// doesn't evaluate it as an interpolation expression and crash rendering.
+	launch.Flags().String("template", "", "substitutes {{ config.X }} at runtime")
 	root.AddCommand(launch)
 
 	old := &cobra.Command{Use: "old", Short: "old cmd", Deprecated: "use launch instead", Run: func(*cobra.Command, []string) {}}
@@ -90,6 +93,13 @@ func TestGenerate_FilesAndContent(t *testing.T) {
 	}
 	if !strings.Contains(launch, "`s3://b/<id>`") {
 		t.Errorf("angle inside a flag-usage code span was escaped:\n%s", launch)
+	}
+	// Vue mustache neutralized so it isn't evaluated as an interpolation.
+	if strings.Contains(launch, "{{ config.X }}") {
+		t.Errorf("Vue mustache left un-escaped in flag usage:\n%s", launch)
+	}
+	if !strings.Contains(launch, "&#123;&#123; config.X &#125;&#125;") {
+		t.Errorf("Vue mustache not escaped to HTML entities:\n%s", launch)
 	}
 	// Local flag table must NOT include the persistent --profile (documented once).
 	if strings.Contains(launch, "`--profile`") {

@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.2] - 2026-07-19
+
+### Fixed
+- **`docgen` now also neutralizes `{{ … }}` Vue mustaches** in prose and flag
+  descriptions. VitePress evaluates `{{ config.X }}` as an interpolation
+  expression and crashes page rendering; docgen now escapes the braces to HTML
+  entities (outside code spans), completing the v0.43.1 angle-bracket fix.
+
 ## [0.43.1] - 2026-07-19
 
 ### Fixed
@@ -180,7 +188,8 @@ of this and earlier tags (`update`, `i18n`, `catalog`, `pricing` packages).
 
 ---
 
-[Unreleased]: https://github.com/spore-host/libs/compare/v0.43.1...HEAD
+[Unreleased]: https://github.com/spore-host/libs/compare/v0.43.2...HEAD
+[0.43.2]: https://github.com/spore-host/libs/compare/v0.43.1...v0.43.2
 [0.43.1]: https://github.com/spore-host/libs/compare/v0.43.0...v0.43.1
 [0.43.0]: https://github.com/spore-host/libs/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/spore-host/libs/compare/v0.41.1...v0.42.0

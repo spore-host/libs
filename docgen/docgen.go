@@ -175,48 +175,51 @@ func escapePipes(s string) string {
 	return strings.ReplaceAll(s, "|", "\\|")
 }
 
-// escapeAnglesInline HTML-escapes `<`/`>` in a single line of prose so VitePress
-// (which runs markdown through Vue's template compiler) doesn't treat a
-// placeholder like `<sweep-id>` as an unclosed HTML tag. Text already inside a
-// backtick code span is left untouched — there the angles render literally and
-// are not parsed as HTML.
+// escapeAnglesInline neutralizes the two markdown-in-Vue hazards in a single line
+// of prose: bare `<`/`>` (VitePress runs markdown through Vue's template compiler,
+// so `<sweep-id>` reads as an unclosed HTML tag) and `{{ … }}` (Vue mustache
+// interpolation, so `{{ config.X }}` is evaluated and crashes rendering). Text
+// inside a backtick code span is left untouched — there both render literally and
+// are not parsed as markup. If the source has an unbalanced backtick run (so we
+// couldn't track code spans reliably), it falls back to escaping everything.
 func escapeAnglesInline(s string) string {
+	rs := []rune(s)
 	var b strings.Builder
 	inCode := false
-	for _, r := range s {
-		switch r {
-		case '`':
+	for i := 0; i < len(rs); i++ {
+		r := rs[i]
+		if r == '`' {
 			inCode = !inCode
 			b.WriteRune(r)
-		case '<':
-			if inCode {
-				b.WriteRune(r)
-			} else {
-				b.WriteString("&lt;")
-			}
-		case '>':
-			if inCode {
-				b.WriteRune(r)
-			} else {
-				b.WriteString("&gt;")
-			}
+			continue
+		}
+		if inCode {
+			b.WriteRune(r)
+			continue
+		}
+		switch {
+		case r == '<':
+			b.WriteString("&lt;")
+		case r == '>':
+			b.WriteString("&gt;")
+		case r == '{' && i+1 < len(rs) && rs[i+1] == '{':
+			b.WriteString("&#123;&#123;")
+			i++
+		case r == '}' && i+1 < len(rs) && rs[i+1] == '}':
+			b.WriteString("&#125;&#125;")
+			i++
 		default:
 			b.WriteRune(r)
 		}
 	}
-	return s2OrEscaped(s, b.String(), inCode)
-}
-
-// s2OrEscaped guards against an unbalanced backtick run in the source (which would
-// leave inCode true at end-of-string and mean we skipped escaping a real angle):
-// in that pathological case, fall back to escaping every angle so the fragment
-// still compiles. Balanced input returns the properly-escaped string.
-func s2OrEscaped(orig, escaped string, unbalanced bool) string {
-	if !unbalanced {
-		return escaped
+	if inCode {
+		// Unbalanced backticks: escape unconditionally so the fragment compiles.
+		e := strings.ReplaceAll(s, "<", "&lt;")
+		e = strings.ReplaceAll(e, ">", "&gt;")
+		e = strings.ReplaceAll(e, "{{", "&#123;&#123;")
+		return strings.ReplaceAll(e, "}}", "&#125;&#125;")
 	}
-	e := strings.ReplaceAll(orig, "<", "&lt;")
-	return strings.ReplaceAll(e, ">", "&gt;")
+	return b.String()
 }
 
 // escapeAnglesBlock applies escapeAnglesInline line-by-line across a multi-line
