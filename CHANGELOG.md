@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **New `docgen` package** — renders a cobra command tree into deterministic,
+  timestamp-free markdown fragments (per-command flag tables + a global-flags
+  file), honoring `Hidden` (skipped) and `Deprecated` (flagged). It's the shared
+  engine behind each CLI's hidden `gen-docs` command and the docs drift gate, so
+  the exhaustive command/flag reference is generated from code and can't silently
+  go stale. Adds `github.com/spf13/cobra` as a direct dependency.
+
 ## [0.42.0] - 2026-07-17
 
 ### Added
