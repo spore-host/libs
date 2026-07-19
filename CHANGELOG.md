@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-07-19
+
 ### Added
 - **New `docgen` package** — renders a cobra command tree into deterministic,
   timestamp-free markdown fragments (per-command flag tables + a global-flags
@@ -168,7 +170,8 @@ of this and earlier tags (`update`, `i18n`, `catalog`, `pricing` packages).
 
 ---
 
-[Unreleased]: https://github.com/spore-host/libs/compare/v0.42.0...HEAD
+[Unreleased]: https://github.com/spore-host/libs/compare/v0.43.0...HEAD
+[0.43.0]: https://github.com/spore-host/libs/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/spore-host/libs/compare/v0.41.1...v0.42.0
 [0.41.1]: https://github.com/spore-host/libs/compare/v0.41.0...v0.41.1
 [0.41.0]: https://github.com/spore-host/libs/compare/v0.40.0...v0.41.0
