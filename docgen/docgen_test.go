@@ -16,14 +16,20 @@ func buildTree() *cobra.Command {
 	root.PersistentFlags().BoolP("verbose", "v", false, "verbose output")
 
 	launch := &cobra.Command{
-		Use:     "launch <name>",
-		Short:   "launch a thing",
-		Long:    "Launch a thing with the given name.",
+		Use:   "launch <name>",
+		Short: "launch a thing",
+		// Long carries a bare <placeholder> in prose and a fenced code block whose
+		// <angles> must stay literal.
+		Long:    "Launch a thing named <name>.\n\n    demo launch <name> --count 3",
 		Example: "demo launch web --count 3",
 		Run:     func(*cobra.Command, []string) {},
 	}
 	launch.Flags().Int("count", 1, "how many")
 	launch.Flags().String("ttl", "1h", "time to live")
+	// A flag whose usage carries a bare <placeholder> and a `<code>` span — the
+	// former must be HTML-escaped (VitePress runs markdown through Vue), the latter
+	// must be left literal inside the code span.
+	launch.Flags().String("dest", "", "path like <bucket>/key (default: `s3://b/<id>`)")
 	root.AddCommand(launch)
 
 	old := &cobra.Command{Use: "old", Short: "old cmd", Deprecated: "use launch instead", Run: func(*cobra.Command, []string) {}}
@@ -63,16 +69,27 @@ func TestGenerate_FilesAndContent(t *testing.T) {
 	if !strings.Contains(launch, "## `demo launch`") {
 		t.Errorf("launch heading missing:\n%s", launch)
 	}
-	if !strings.Contains(launch, "Launch a thing with the given name.") {
-		t.Error("launch Long description missing (i18n/desc population)")
+	if !strings.Contains(launch, "Launch a thing named &lt;name&gt;.") {
+		t.Errorf("launch Long prose <placeholder> not HTML-escaped:\n%s", launch)
+	}
+	// Bare angle in an indented code block within Long stays literal.
+	if !strings.Contains(launch, "demo launch <name> --count 3") {
+		t.Errorf("angle inside indented code block was escaped:\n%s", launch)
 	}
 	if !strings.Contains(launch, "demo launch web --count 3") {
 		t.Error("launch example missing")
 	}
-	for _, f := range []string{"`--count`", "`--ttl`"} {
+	for _, f := range []string{"`--count`", "`--ttl`", "`--dest`"} {
 		if !strings.Contains(launch, f) {
 			t.Errorf("launch flag %s missing from table", f)
 		}
+	}
+	// The --dest usage: bare <bucket> escaped, `<id>` inside a code span left literal.
+	if !strings.Contains(launch, "path like &lt;bucket&gt;/key") {
+		t.Errorf("bare <placeholder> in flag usage not escaped:\n%s", launch)
+	}
+	if !strings.Contains(launch, "`s3://b/<id>`") {
+		t.Errorf("angle inside a flag-usage code span was escaped:\n%s", launch)
 	}
 	// Local flag table must NOT include the persistent --profile (documented once).
 	if strings.Contains(launch, "`--profile`") {

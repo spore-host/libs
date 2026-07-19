@@ -86,7 +86,7 @@ func writeCommand(b *strings.Builder, c *cobra.Command, cli string, level int) {
 	fmt.Fprintf(b, "%s `%s %s`\n\n", strings.Repeat("#", level), cli, c.CommandPath()[len(cli)+1:])
 
 	if c.Deprecated != "" {
-		fmt.Fprintf(b, "> **Deprecated:** %s\n\n", c.Deprecated)
+		fmt.Fprintf(b, "> **Deprecated:** %s\n\n", escapeAnglesInline(c.Deprecated))
 	}
 	if c.Aliases != nil && len(c.Aliases) > 0 {
 		fmt.Fprintf(b, "*Aliases: %s*\n\n", strings.Join(c.Aliases, ", "))
@@ -97,7 +97,7 @@ func writeCommand(b *strings.Builder, c *cobra.Command, cli string, level int) {
 		desc = c.Short
 	}
 	if strings.TrimSpace(desc) != "" {
-		fmt.Fprintf(b, "%s\n\n", strings.TrimSpace(desc))
+		fmt.Fprintf(b, "%s\n\n", escapeAnglesBlock(strings.TrimSpace(desc)))
 	}
 
 	fmt.Fprintf(b, "```\n%s\n```\n\n", c.UseLine())
@@ -143,7 +143,7 @@ func writeFlagTable(b *strings.Builder, fs *pflag.FlagSet) {
 			short: short,
 			typ:   f.Value.Type(),
 			def:   defaultCell(f),
-			usage: escapePipes(usage),
+			usage: escapeAnglesInline(escapePipes(usage)),
 		})
 	})
 	if len(rows) == 0 {
@@ -173,4 +173,70 @@ func defaultCell(f *pflag.Flag) string {
 func escapePipes(s string) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	return strings.ReplaceAll(s, "|", "\\|")
+}
+
+// escapeAnglesInline HTML-escapes `<`/`>` in a single line of prose so VitePress
+// (which runs markdown through Vue's template compiler) doesn't treat a
+// placeholder like `<sweep-id>` as an unclosed HTML tag. Text already inside a
+// backtick code span is left untouched — there the angles render literally and
+// are not parsed as HTML.
+func escapeAnglesInline(s string) string {
+	var b strings.Builder
+	inCode := false
+	for _, r := range s {
+		switch r {
+		case '`':
+			inCode = !inCode
+			b.WriteRune(r)
+		case '<':
+			if inCode {
+				b.WriteRune(r)
+			} else {
+				b.WriteString("&lt;")
+			}
+		case '>':
+			if inCode {
+				b.WriteRune(r)
+			} else {
+				b.WriteString("&gt;")
+			}
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return s2OrEscaped(s, b.String(), inCode)
+}
+
+// s2OrEscaped guards against an unbalanced backtick run in the source (which would
+// leave inCode true at end-of-string and mean we skipped escaping a real angle):
+// in that pathological case, fall back to escaping every angle so the fragment
+// still compiles. Balanced input returns the properly-escaped string.
+func s2OrEscaped(orig, escaped string, unbalanced bool) string {
+	if !unbalanced {
+		return escaped
+	}
+	e := strings.ReplaceAll(orig, "<", "&lt;")
+	return strings.ReplaceAll(e, ">", "&gt;")
+}
+
+// escapeAnglesBlock applies escapeAnglesInline line-by-line across a multi-line
+// block, skipping fenced code blocks (``` … ```) and indented (4-space/tab) code
+// lines entirely — angles there are literal code, not markup.
+func escapeAnglesBlock(s string) string {
+	lines := strings.Split(s, "\n")
+	inFence := false
+	for i, ln := range lines {
+		if strings.HasPrefix(strings.TrimSpace(ln), "```") {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
+		if strings.HasPrefix(ln, "    ") || strings.HasPrefix(ln, "\t") {
+			continue
+		}
+		lines[i] = escapeAnglesInline(ln)
+	}
+	return strings.Join(lines, "\n")
 }

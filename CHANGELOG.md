@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`docgen` now HTML-escapes `<`/`>` in prose and flag descriptions** so bare
+  `<placeholder>` tokens (e.g. `<sweep-id>`, `shell: <cmd>`) don't break the
+  VitePress build, which runs markdown through Vue's template compiler and reads
+  `<foo>` as an unclosed HTML tag. Angles inside backtick code spans and fenced/
+  indented code blocks are left literal, where they render correctly and aren't
+  parsed as markup.
+
 ## [0.43.0] - 2026-07-19
 
 ### Added
