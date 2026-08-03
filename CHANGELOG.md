@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **CI now fails on unformatted code (#30).** Nothing did before: the workflow had
+  no formatting step, and this repo has no Makefile, so there wasn't even a local
+  `fmt` target anyone might run. Three files in `i18n/` sat unformatted on `main`.
+
+  The gate reports drift instead of fixing it — offenders listed with a diff —
+  because `gofmt -w` rewrites files and exits 0, so a check built on it could only
+  ever report success. The three drifted files are formatted (struct-field and
+  map-literal alignment only; verified whitespace-only with `git diff -w`).
+  Internal to the repo; no API change.
+
 ## [0.43.2] - 2026-07-19
 
 ### Fixed
