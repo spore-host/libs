@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Pinned GitHub Actions to commit SHAs** instead of floating tags
+  (`actions/checkout@v6` → `@d23441a… # v6.1.0`, `setup-go`, `codecov-action`).
+  A tag is mutable: `@v6` means "whatever v6 points at when the job runs", so the
+  code CI executes — with a checkout of this repo and a token — could change with
+  no commit here. Not hypothetical: `actions/checkout@v6` had already moved from
+  the v6.0.3-era commit the sibling repos pin to a later one, silently.
+
+  A test now enforces the pinning (full 40-hex SHA plus a `# vX.Y.Z` comment, so
+  bumps stay reviewable). Note this repo has no Dependabot config, so pins do not
+  auto-bump — check them when touching CI.
+
 ### Changed
 - **CI now fails on unformatted code (#30).** Nothing did before: the workflow had
   no formatting step, and this repo has no Makefile, so there wasn't even a local
