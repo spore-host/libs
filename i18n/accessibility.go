@@ -5,67 +5,67 @@ package i18n
 
 // Common emoji mappings
 var emojiMap = map[string]string{
-	"rocket":                 "🚀",
-	"wizard":                 "🧙",
-	"package":                "📦",
-	"globe":                  "🌍",
-	"money":                  "💰",
-	"money_bag":              "💰",
-	"dollar":                 "💵",
-	"clock":                  "⏱️",
-	"key":                    "🔑",
-	"label":                  "🏷️",
-	"tag":                    "🏷️",
-	"check":                  "✅",
-	"cross":                  "❌",
-	"warning":                "⚠️",
-	"hourglass":              "⏳",
-	"plug":                   "🔌",
-	"mushroom":               "🍄",
-	"search":                 "🔍",
-	"magnifying_glass":       "🔍",
+	"rocket":                  "🚀",
+	"wizard":                  "🧙",
+	"package":                 "📦",
+	"globe":                   "🌍",
+	"money":                   "💰",
+	"money_bag":               "💰",
+	"dollar":                  "💵",
+	"clock":                   "⏱️",
+	"key":                     "🔑",
+	"label":                   "🏷️",
+	"tag":                     "🏷️",
+	"check":                   "✅",
+	"cross":                   "❌",
+	"warning":                 "⚠️",
+	"hourglass":               "⏳",
+	"plug":                    "🔌",
+	"mushroom":                "🍄",
+	"search":                  "🔍",
+	"magnifying_glass":        "🔍",
 	"magnifying_glass_tilted": "🔎",
-	"chart":                  "📊",
-	"location":               "📍",
-	"pushpin":                "📍",
-	"laptop":                 "💻",
-	"computer":               "💻",
-	"gear":                   "⚙️",
-	"sparkles":               "✨",
-	"party":                  "🎉",
-	"alert":                  "🚨",
-	"megaphone":              "📢",
-	"sleep":                  "💤",
-	"zzz":                    "💤",
-	"stop":                   "🔴",
-	"memo":                   "📝",
-	"books":                  "📚",
-	"clipboard":              "📋",
-	"lightbulb":              "💡",
-	"wrench":                 "🔧",
-	"gpu":                    "🎮",
-	"video_game":             "🎮",
-	"flag_us":                "🇺🇸",
-	"flag_eu":                "🇪🇺",
-	"flag_asia":              "🌏",
-	"one":                    "1️⃣",
-	"two":                    "2️⃣",
-	"three":                  "3️⃣",
-	"four":                   "4️⃣",
+	"chart":                   "📊",
+	"location":                "📍",
+	"pushpin":                 "📍",
+	"laptop":                  "💻",
+	"computer":                "💻",
+	"gear":                    "⚙️",
+	"sparkles":                "✨",
+	"party":                   "🎉",
+	"alert":                   "🚨",
+	"megaphone":               "📢",
+	"sleep":                   "💤",
+	"zzz":                     "💤",
+	"stop":                    "🔴",
+	"memo":                    "📝",
+	"books":                   "📚",
+	"clipboard":               "📋",
+	"lightbulb":               "💡",
+	"wrench":                  "🔧",
+	"gpu":                     "🎮",
+	"video_game":              "🎮",
+	"flag_us":                 "🇺🇸",
+	"flag_eu":                 "🇪🇺",
+	"flag_asia":               "🌏",
+	"one":                     "1️⃣",
+	"two":                     "2️⃣",
+	"three":                   "3️⃣",
+	"four":                    "4️⃣",
 }
 
 // ASCII alternatives for accessibility mode
 var symbolMap = map[string]string{
-	"success":   "✅", // Visual
-	"error":     "❌", // Visual
-	"warning":   "⚠️",  // Visual
-	"info":      "ℹ️",  // Visual
-	"pending":   "⏳", // Visual
-	"progress":  "⏳", // Visual
-	"complete":  "✅", // Visual
-	"failed":    "❌", // Visual
-	"skip":      "⏭️",  // Visual
-	"pause":     "⏸️",  // Visual
+	"success":  "✅",  // Visual
+	"error":    "❌",  // Visual
+	"warning":  "⚠️", // Visual
+	"info":     "ℹ️", // Visual
+	"pending":  "⏳",  // Visual
+	"progress": "⏳",  // Visual
+	"complete": "✅",  // Visual
+	"failed":   "❌",  // Visual
+	"skip":     "⏭️", // Visual
+	"pause":    "⏸️", // Visual
 }
 
 // ASCII alternatives for accessibility mode

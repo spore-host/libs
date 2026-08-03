@@ -25,7 +25,7 @@ func TestNormalizeLanguage(t *testing.T) {
 		{"Uppercase", "EN_US", "en"},
 		{"Already normalized", "en", "en"},
 		{"Portuguese Brazil", "pt_BR", "pt"}, // Portuguese now supported
-		{"Unsupported", "zh_CN", "en"},        // Chinese falls back to English
+		{"Unsupported", "zh_CN", "en"},       // Chinese falls back to English
 	}
 
 	for _, tt := range tests {
@@ -191,10 +191,10 @@ func TestAccessibilityModeImpliesNoEmoji(t *testing.T) {
 
 func TestEmojiOutput(t *testing.T) {
 	tests := []struct {
-		name         string
-		accessMode   bool
-		noEmoji      bool
-		emojiName    string
+		name          string
+		accessMode    bool
+		noEmoji       bool
+		emojiName     string
 		expectedEmoji string
 	}{
 		{"Normal mode", false, false, "rocket", "🚀"},

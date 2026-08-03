@@ -94,11 +94,11 @@ func TestLanguageSwitchAtRuntime(t *testing.T) {
 // TestEmojiAccessibilityMode validates emoji and accessibility mode behavior
 func TestEmojiAccessibilityMode(t *testing.T) {
 	tests := []struct {
-		name              string
-		noEmoji           bool
-		accessibility     bool
-		expectedEmoji     string // Expected from Emoji("rocket")
-		expectedSymbol    string // Expected from Symbol("success")
+		name           string
+		noEmoji        bool
+		accessibility  bool
+		expectedEmoji  string // Expected from Emoji("rocket")
+		expectedSymbol string // Expected from Symbol("success")
 	}{
 		{"Normal mode", false, false, "🚀", "✅"},
 		{"No emoji mode", true, false, "", "[✓]"},
@@ -109,8 +109,8 @@ func TestEmojiAccessibilityMode(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := Config{
-				Language:         "en",
-				NoEmoji:          tt.noEmoji,
+				Language:          "en",
+				NoEmoji:           tt.noEmoji,
 				AccessibilityMode: tt.accessibility,
 			}
 			i18nInstance, err := NewLocalizer(cfg)
@@ -203,9 +203,9 @@ func TestPluralizations(t *testing.T) {
 		count    int
 		expected string
 	}{
-		{0, "instances"},  // zero/other form
-		{1, "instance"},   // one form
-		{5, "instances"},  // other form
+		{0, "instances"},   // zero/other form
+		{1, "instance"},    // one form
+		{5, "instances"},   // other form
 		{100, "instances"}, // other form
 	}
 
