@@ -9,6 +9,8 @@ package hygiene
 
 import (
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -90,4 +92,58 @@ func unquote(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// TestActionsArePinnedToSHAs: every `uses:` in a workflow must name a full
+// 40-hex commit SHA, not a tag.
+//
+// A tag is mutable. `actions/checkout@v6` means "whatever v6 points at when the
+// job runs", so the code executing in CI — with a checkout of this repo and a
+// token — can change without a commit here. That is a supply-chain hole, and it
+// is not hypothetical for this repo: while pinning these, `actions/checkout@v6`
+// had already moved from the v6.0.3-era commit the sibling repos pinned to a
+// later one, silently, exactly as designed.
+//
+// The trailing `# vX.Y.Z` comment is required too. A bare SHA is unreadable, and
+// the version is what makes a bump reviewable — without it nobody can tell
+// whether a pin is current or two years stale.
+func TestActionsArePinnedToSHAs(t *testing.T) {
+	entries, err := os.ReadDir("../../.github/workflows")
+	if err != nil {
+		t.Fatalf("read workflows dir: %v", err)
+	}
+	// A local `uses: ./.github/...` is a path, not a registry ref — nothing to pin.
+	pinned := regexp.MustCompile(`^[^@\s]+@[0-9a-f]{40}\s+#\s*v?\d`)
+	found := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yml") && !strings.HasSuffix(e.Name(), ".yaml") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join("../../.github/workflows", e.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", e.Name(), err)
+		}
+		for i, line := range strings.Split(string(data), "\n") {
+			trimmed := strings.TrimSpace(line)
+			trimmed = strings.TrimPrefix(trimmed, "- ")
+			if !strings.HasPrefix(trimmed, "uses:") {
+				continue
+			}
+			ref := strings.TrimSpace(strings.TrimPrefix(trimmed, "uses:"))
+			if strings.HasPrefix(ref, "./") {
+				continue
+			}
+			found++
+			if !pinned.MatchString(ref) {
+				t.Errorf("%s:%d: %q is not pinned to a full commit SHA with a version comment.\n"+
+					"A tag is mutable, so the code CI runs can change without a commit here. Use:\n"+
+					"    uses: owner/action@<40-hex-sha> # vX.Y.Z",
+					e.Name(), i+1, ref)
+			}
+		}
+	}
+	if found == 0 {
+		t.Error("no `uses:` lines found in .github/workflows — this test is asserting nothing; " +
+			"check the parser against the current workflow layout")
+	}
 }
