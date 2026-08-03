@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- **Bumped `golang.org/x/text` v0.21.0 → v0.39.0 — CVE-2026-56852 (HIGH)** (#35).
+  A `norm.Iter` can enter an infinite loop on certain input. libs only imports
+  `x/text/language`, so the vulnerable symbol isn't called and `govulncheck` reports
+  nothing — but the dependency is present and it is the kind of thing that becomes
+  reachable one import later.
+
+  Worth stating why it sat here so long: all three CLIs had already been forced to
+  v0.39.0 by *their own* security scans. libs, which they all import, had no
+  security workflow, so it was the one place nobody was looking — the most-shared
+  module in the suite was the least-scanned.
+
+- **Added a security workflow** (#35). libs was the only Go repo in the suite
+  without one: govulncheck (pinned `@v1.3.0` — v1.4.0 panics on generics), gitleaks
+  over full history, Trivy fs + config, and Semgrep SAST, on PR/push/weekly.
+
+  Semgrep is also what flags mutable action tags, which is why libs was the last
+  repo still using floating `@v6` refs until they were pinned above — the rule
+  lives in a workflow this repo didn't have.
+
 - **Pinned GitHub Actions to commit SHAs** instead of floating tags
   (`actions/checkout@v6` → `@d23441a… # v6.1.0`, `setup-go`, `codecov-action`).
   A tag is mutable: `@v6` means "whatever v6 points at when the job runs", so the
