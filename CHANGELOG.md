@@ -17,8 +17,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the v6.0.3-era commit the sibling repos pin to a later one, silently.
 
   A test now enforces the pinning (full 40-hex SHA plus a `# vX.Y.Z` comment, so
-  bumps stay reviewable). Note this repo has no Dependabot config, so pins do not
-  auto-bump — check them when touching CI.
+  bumps stay reviewable).
+
+- **Added a Dependabot config so those pins actually get bumped.** Pinning to a
+  SHA closes the mutable-tag hole but opens a staleness one: a SHA never moves,
+  including past a security fix, and unlike `@v6` nothing updates it for you — so
+  pinning is only safe if something bumps the pins. This repo had no Dependabot
+  config and has no security workflow, so nothing did, and nothing would have said
+  so. Weekly, grouped into one PR, with a 7-day cooldown so a freshly-published
+  action tag isn't proposed the day it ships. Dependabot rewrites the `# vX.Y.Z`
+  comment alongside the SHA, so the pins stay readable and the test keeps passing.
+
+  The group pattern is `*`, not the umbrella repo's `actions/*`: this repo also
+  uses `codecov/codecov-action`, which `actions/*` would leave out. A test asserts
+  that every action in every workflow is matched by some pattern, so adding a
+  third-party action without widening the pattern fails CI rather than quietly
+  going unmanaged.
 
 ### Changed
 - **CI now fails on unformatted code (#30).** Nothing did before: the workflow had

@@ -1,0 +1,45 @@
+# Dependabot configuration for libs.
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+#
+# Why this file exists: the workflow pins every action to a commit SHA (libs#32),
+# which closes the mutable-tag hole but opens a staleness one — a pinned SHA never
+# moves, including past a security fix, and unlike a `@v6` tag nothing updates it.
+# Pinning is only safe when something bumps the pins. That something is this file.
+#
+# This repo has no security workflow, so there is no Semgrep mutable-tag rule and
+# no other automation watching CI's supply chain here.
+
+version: 2
+updates:
+  # GitHub Actions — the workflow pins SHAs, and Dependabot understands that: it
+  # rewrites both the SHA and the trailing `# vX.Y.Z` comment, so pins stay
+  # readable and the hygiene test (TestActionsArePinnedToSHAs) keeps passing.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/Los_Angeles"
+    # Don't propose a release the day it ships; let it sit a week first. A fresh
+    # action tag is exactly when a compromised or broken one is still unnoticed.
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "type:infra"
+    commit-message:
+      prefix: "deps(actions)"
+      include: "scope"
+    # No `reviewers:` key on purpose — it's deprecated and inert. Every one of the
+    # umbrella repo's Dependabot PRs asks for a reviewer and none has ever had a
+    # review request. Use CODEOWNERS if you want one.
+    groups:
+      # One PR for all of them, not one per action. The pattern is "*", not the
+      # umbrella's "actions/*", because this repo also uses codecov/codecov-action
+      # — under "actions/*" that would be left out of the group and open its own
+      # PR, which is how you end up ignoring them.
+      github-actions:
+        patterns:
+          - "*"
