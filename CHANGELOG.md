@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- CI moved off the self-hosted orion runner fleet onto `ubuntu-latest`. The
+  fleet (colima/Docker on orion.local) is being decommissioned org-wide; no
+  behavior change to the tool.
+
 ### Security
 - **Bumped `golang.org/x/text` v0.21.0 → v0.39.0 — CVE-2026-56852 (HIGH)** (#35).
   A `norm.Iter` can enter an infinite loop on certain input. libs only imports
