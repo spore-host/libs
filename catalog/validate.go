@@ -27,10 +27,16 @@ func Validate() []error {
 	// The shipped/global catalog must contain only PUBLIC images (#392): a private
 	// image here is unlaunchable for everyone but its owner, so it has no place in
 	// the artifact shipped to all consumers. Private images belong in a user's
-	// local overlay. (This is the offline half; online resolvability is a separate
-	// authenticated CI gate, libs#18.) validateApps stays overlay-safe — it does
-	// NOT enforce this, since overlays legitimately carry private images.
-	for _, app := range apps {
+	// local overlay — so this check runs against the EMBEDDED catalog only, not
+	// List()'s overlay-merged result. Checking the merged list made Validate() (and
+	// TestCatalogValid, which spawn's CI runs too) fail on any machine with a local
+	// ~/.spawn/catalog.yaml binding a private image, exactly the case the overlay
+	// exists for — the shipped catalog was never actually invalid, only the local
+	// developer machine running the check was. (This is the offline half; online
+	// resolvability is a separate authenticated CI gate, libs#18.) validateApps
+	// stays overlay-safe — it does NOT enforce this, since overlays legitimately
+	// carry private images.
+	for _, app := range embeddedApps() {
 		if app.Containerized() && app.ImageVisibility() != VisibilityPublic {
 			errs = append(errs, fmt.Errorf("%s: image %q is %s — the shipped catalog must be public; put private images in a local overlay (#392)",
 				app.Name, app.Image, app.ImageVisibility()))
