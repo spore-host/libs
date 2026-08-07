@@ -16,6 +16,25 @@ func TestValidate_EmbeddedCatalogClean(t *testing.T) {
 	}
 }
 
+// TestValidate_IgnoresOverlayPrivateImage is the regression guard for the bug
+// that broke Validate() (and spawn's TestCatalogValid, which calls it) on any
+// machine with a local ~/.spawn/catalog.yaml binding a private image — exactly
+// the overlay's intended use (#392). Validate() used to check List()'s
+// overlay-merged result, so a perfectly valid local rebind made the check fail
+// as if the SHIPPED catalog were broken, when only the developer's own overlay
+// was (correctly) private.
+func TestValidate_IgnoresOverlayPrivateImage(t *testing.T) {
+	withOverlay(t, `
+apps:
+  - name: paraview
+    image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/paraview
+    tag_default: "5.13.2"
+`)
+	for _, err := range Validate() {
+		t.Errorf("Validate() must not flag an overlay-bound private image: %v", err)
+	}
+}
+
 func TestValidateApps_CatchesDefects(t *testing.T) {
 	base := map[string]string{"us-east-1": "ami-123"}
 	tests := []struct {

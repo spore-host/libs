@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`catalog.Validate()` no longer flags a private image bound only in a local
+  overlay.** It checked `List()` (the overlay-merged catalog) for the
+  shipped-catalog-must-be-public rule (#392), so any machine with a
+  `~/.spawn/catalog.yaml` rebinding an app to a private ECR image — the
+  overlay's whole purpose — failed `Validate()` as if the SHIPPED catalog were
+  broken, when only that machine's own (correctly private) local binding was.
+  This broke `go test`/`make check` for any contributor with such an overlay,
+  and spawn's `TestCatalogValid` calls `Validate()` directly, so it broke
+  spawn's CI-equivalent too (spawn#489). The public-image check now runs
+  against the embedded `catalog.yaml` only.
+
 ### Changed
 - CI moved off the self-hosted orion runner fleet onto `ubuntu-latest`. The
   fleet (colima/Docker on orion.local) is being decommissioned org-wide; no

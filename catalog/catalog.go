@@ -266,3 +266,16 @@ func List() []AppEntry {
 	load()
 	return allSorted
 }
+
+// embeddedApps parses catalog.yaml directly, with NO overlay merge — the
+// shipped/global baseline as it ships, before any local ~/.spawn/catalog.yaml
+// rebind is layered on. Used by Validate's public-image check, which is a
+// statement about the shipped artifact and must not be affected by what a
+// given machine happens to have configured locally.
+func embeddedApps() []AppEntry {
+	var f catalogFile
+	if err := yaml.Unmarshal(catalogData, &f); err != nil {
+		panic("catalog: failed to parse catalog.yaml: " + err.Error())
+	}
+	return f.Apps
+}
