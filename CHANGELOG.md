@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.43.3] - 2026-08-07
+
 ### Fixed
 - **`catalog.Validate()` no longer flags a private image bound only in a local
   overlay.** It checked `List()` (the overlay-merged catalog) for the
@@ -261,7 +263,8 @@ of this and earlier tags (`update`, `i18n`, `catalog`, `pricing` packages).
 
 ---
 
-[Unreleased]: https://github.com/spore-host/libs/compare/v0.43.2...HEAD
+[Unreleased]: https://github.com/spore-host/libs/compare/v0.43.3...HEAD
+[0.43.3]: https://github.com/spore-host/libs/compare/v0.43.2...v0.43.3
 [0.43.2]: https://github.com/spore-host/libs/compare/v0.43.1...v0.43.2
 [0.43.1]: https://github.com/spore-host/libs/compare/v0.43.0...v0.43.1
 [0.43.0]: https://github.com/spore-host/libs/compare/v0.42.0...v0.43.0
