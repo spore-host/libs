@@ -83,9 +83,13 @@ type AppEntry struct {
 	// consumer doesn't break; new entries must not set it. Every value here was
 	// found dangling/unshared from the launch account (#389) — do not trust it.
 	AMIs map[string]string `yaml:"amis"`
-	// BaseAMIs maps AWS region to the shared spore-dcv-base AMI ID (DCV + NVIDIA +
-	// Docker + NVIDIA Container Toolkit + spored). One image per region serves all
-	// container apps. Must be shared/visible to the launch account (#389 root cause).
+	// BaseAMIs is an OPTIONAL per-region base-AMI pin. Normally leave it unset:
+	// the launcher resolves the AWS-maintained GPU DLAMI (NVIDIA driver preinstalled,
+	// every region) via an SSM public parameter at launch and installs DCV at boot
+	// (spore-host#286/#389), so no owned/shared AMI is needed. Set a region here only
+	// to pin a custom pre-baked image (e.g. one with the app already installed);
+	// a pinned AMI must be launch-visible from the launch account. Owning a full
+	// per-region base-AMI table was the source of #389 — don't, unless you must.
 	BaseAMIs map[string]string `yaml:"base_amis"`
 }
 
