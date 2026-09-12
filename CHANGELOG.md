@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.44.0] - 2026-09-11
+
 ### Changed
 - **`catalog`: a container app's `base_amis` is now an optional pin, not a
   requirement** (spore-host#286/#389). The launcher resolves the AWS-maintained
@@ -273,7 +275,8 @@ of this and earlier tags (`update`, `i18n`, `catalog`, `pricing` packages).
 
 ---
 
-[Unreleased]: https://github.com/spore-host/libs/compare/v0.43.3...HEAD
+[Unreleased]: https://github.com/spore-host/libs/compare/v0.44.0...HEAD
+[0.44.0]: https://github.com/spore-host/libs/compare/v0.43.3...v0.44.0
 [0.43.3]: https://github.com/spore-host/libs/compare/v0.43.2...v0.43.3
 [0.43.2]: https://github.com/spore-host/libs/compare/v0.43.1...v0.43.2
 [0.43.1]: https://github.com/spore-host/libs/compare/v0.43.0...v0.43.1
