@@ -8,7 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.43.3] - 2026-08-07
+### Changed
+- **`catalog`: a container app's `base_amis` is now an optional pin, not a
+  requirement** (spore-host#286/#389). The launcher resolves the AWS-maintained
+  GPU DLAMI (NVIDIA driver preinstalled, every region) via an SSM public
+  parameter at launch and installs DCV at boot, so no owned/shared base AMI is
+  needed. `Validate()` no longer errors on a container app without `base_amis`;
+  set `base_amis` only to pin a custom pre-baked image. Removed the broken
+  `gpu_base_amis` anchor (dangling/unshared/duplicated per-region IDs — the
+  source of #389) from the shipped `catalog.yaml`; paraview/chimerax now carry
+  no base-AMI table. The `AppEntry.BaseAMIs` field is unchanged (still an
+  optional map), so no consumer signature breaks.
 
 ### Fixed
 - **`catalog.Validate()` no longer flags a private image bound only in a local

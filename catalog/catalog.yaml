@@ -1,34 +1,20 @@
 # spore.host application catalog
 #
 # Container-based catalog (#290): each app ships as a Docker image pulled at
-# launch onto a single shared DCV base AMI (base_amis below), instead of a baked
-# per-app AMI. This removed the per-app-per-region AMI table that had drifted into
-# dangling and duplicated IDs, none of which were even shared to the launch
-# account (#389). Adding/updating an app is now a `docker push`, not a 9-region
-# Packer matrix.
+# launch onto a GPU base AMI, instead of a baked per-app AMI. Adding/updating an
+# app is a `docker push`, not a 9-region Packer matrix.
 #
-# GPU base: spore-dcv-gpu-al2023 — DCV 2025.0.20103 + NVIDIA 595.71.05 + Docker +
-# NVIDIA Container Toolkit + spored, on AL2023. Built with
-# infra/amis/dcv-gpu-al2023.pkr.hcl in the build account (942542972736) and shared
-# to the launch account via share-base-ami.sh. CPU base AMIs are TBD; CPU apps
-# below are not yet containerized.
+# Base AMI (spore-host#286/#389): the launcher resolves the AWS-maintained Deep
+# Learning Base GPU AMI (Amazon Linux 2023) — NVIDIA driver preinstalled, present
+# in every region — via an SSM public parameter at launch, and installs the
+# (free, self-licensing) Amazon DCV server at boot. So there is NO owned/shared
+# base AMI: the per-app-per-region AMI table that drifted into dangling,
+# duplicated, and unshared IDs (#389) is gone by construction. An app may still
+# set an optional `base_amis:` pin to a custom pre-baked image, but should not.
 #
 # Images live under public.ecr.aws/f8g1e7l5 — the build account's default ECR
 # Public alias. (A custom "spore-host" alias needs an async AWS approval; switch
 # the image: prefixes if/when it's granted.)
-
-# Shared GPU DCV base AMIs (one per region serves every GPU container app).
-gpu_base_amis: &gpu_base_amis
-  us-east-1: ami-0c37fb59c90d1ed3a  # spore-dcv-gpu-al2023, 2026-05-16
-  # Build other regions: packer build -var region=<region> infra/amis/dcv-gpu-al2023.pkr.hcl
-  us-east-2: ""
-  us-west-1: ""
-  us-west-2: ""
-  eu-west-1: ""
-  eu-west-2: ""
-  eu-central-1: ""
-  ap-southeast-1: ""
-  ap-northeast-1: ""
 
 apps:
   - name: paraview
@@ -46,9 +32,8 @@ apps:
     # Recipe, not cake (#392): spore.host ships the public build recipe; the
     # actual image is BYO. Build with infra/amis/containers/build-push.sh and bind
     # it in ~/.spawn/catalog.yaml (image:/tag_default:), or launch with --image.
-    # base_amis stays here — the shared DCV base AMI is needed once a cake is bound.
+    # No base_amis: the GPU DLAMI base is resolved via SSM at launch (#286/#389).
     recipe: infra/amis/containers/paraview
-    base_amis: *gpu_base_amis
 
   - name: chimerax
     description: "Protein structure visualization, cryo-EM (UCSF ChimeraX)"
@@ -64,8 +49,8 @@ apps:
     license: open-source
     # Recipe, not cake (#392). ChimeraX also has a license-gated download — the
     # recipe (infra/amis/containers/chimerax) documents the human .deb step.
+    # No base_amis: the GPU DLAMI base is resolved via SSM at launch (#286/#389).
     recipe: infra/amis/containers/chimerax
-    base_amis: *gpu_base_amis
 
   - name: igv
     description: "Integrative Genomics Viewer — genome browser, sequencing data"

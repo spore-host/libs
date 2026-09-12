@@ -63,16 +63,6 @@ func TestValidateApps_CatchesDefects(t *testing.T) {
 			wantSub: "not in tags_available",
 		},
 		{
-			name:    "container without base_amis",
-			apps:    []AppEntry{{Name: "x", Image: "ecr/x", TagDefault: "1.0"}},
-			wantSub: "no base_amis",
-		},
-		{
-			name:    "base_amis all empty",
-			apps:    []AppEntry{{Name: "x", Image: "ecr/x", TagDefault: "1.0", BaseAMIs: map[string]string{"us-east-1": ""}}},
-			wantSub: "no base_amis",
-		},
-		{
 			name: "two apps share an image",
 			apps: []AppEntry{
 				{Name: "a", Image: "ecr/shared", TagDefault: "1", BaseAMIs: base},
@@ -99,11 +89,14 @@ func TestValidateApps_CatchesDefects(t *testing.T) {
 }
 
 func TestValidateApps_AcceptsGoodEntries(t *testing.T) {
-	base := map[string]string{"us-east-1": "ami-123"}
 	apps := []AppEntry{
-		{Name: "paraview", Image: "ecr/paraview", TagDefault: "5.13.2", TagsAvailable: []string{"5.13.2"}, BaseAMIs: base},
-		{Name: "igv", LaunchCommand: "/opt/igv/igv.sh"},                              // legacy CPU app, still valid
-		{Name: "chimerax", Recipe: "infra/amis/containers/chimerax", BaseAMIs: base}, // recipe-only definition (#392)
+		// Container app with NO base_amis — valid: the base AMI is resolved from
+		// the AWS GPU DLAMI via SSM at launch (spore-host#286/#389).
+		{Name: "paraview", Image: "ecr/paraview", TagDefault: "5.13.2", TagsAvailable: []string{"5.13.2"}},
+		// Container app with an optional pinned base AMI — also valid.
+		{Name: "custom", Image: "ecr/custom", TagDefault: "1.0", BaseAMIs: map[string]string{"us-east-1": "ami-123"}},
+		{Name: "igv", LaunchCommand: "/opt/igv/igv.sh"},              // legacy CPU app, still valid
+		{Name: "chimerax", Recipe: "infra/amis/containers/chimerax"}, // recipe-only definition (#392)
 	}
 	if errs := validateApps(apps); len(errs) != 0 {
 		t.Errorf("valid apps reported errors: %v", errs)

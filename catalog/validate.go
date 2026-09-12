@@ -12,15 +12,19 @@ import (
 // What it enforces (offline):
 //   - every app is launchable: container Image or a legacy LaunchCommand;
 //   - no app reintroduces the deprecated per-app AMI table (the #389 data);
-//   - a container app has a non-empty TagDefault, TagDefault is within
-//     TagsAvailable (when that list is set), and at least one BaseAMIs region;
-//   - no two apps share a base AMI ID for the *same* region only by accident —
-//     duplication across apps is allowed for BaseAMIs (the base is shared by
-//     design), but a container app's Image must be unique per app.
+//   - a container app has a non-empty TagDefault and TagDefault is within
+//     TagsAvailable (when that list is set);
+//   - a container app's Image is unique per app.
+//
+// It does NOT require BaseAMIs: the base AMI is resolved at launch from the
+// AWS-maintained GPU DLAMI via SSM (spore-host#286/#389), so BaseAMIs is an
+// optional pin, not a requirement. Owning a per-region base-AMI table was the
+// source of #389 (dangling / unshared / duplicated IDs); there is nothing to
+// own now.
 //
 // What it does NOT check (needs AWS creds → a separate authenticated job):
 //   - that each Image:tag actually resolves in ECR;
-//   - that each BaseAMIs entry is launch-visible from the launch account.
+//   - that a pinned BaseAMIs entry is launch-visible from the launch account.
 func Validate() []error {
 	apps := List()
 	errs := validateApps(apps)
@@ -76,9 +80,10 @@ func validateApps(apps []AppEntry) []error {
 				errs = append(errs, fmt.Errorf("%s: tag_default %q is not in tags_available %v", app.Name, app.TagDefault, app.TagsAvailable))
 			}
 		}
-		if len(app.BaseAMIs) == 0 || allEmpty(app.BaseAMIs) {
-			errs = append(errs, fmt.Errorf("%s: container app has no base_amis", app.Name))
-		}
+		// BaseAMIs is intentionally NOT required: an unset/empty base_amis means
+		// "resolve the AWS DLAMI base via SSM at launch" (spore-host#286/#389),
+		// which is the default and recommended path. A populated base_amis is an
+		// optional per-region pin for advanced use (e.g. a custom pre-baked image).
 		if prev, ok := images[app.Image]; ok {
 			errs = append(errs, fmt.Errorf("%s: image %q is also used by %q — each app needs its own image", app.Name, app.Image, prev))
 		} else {
@@ -86,15 +91,6 @@ func validateApps(apps []AppEntry) []error {
 		}
 	}
 	return errs
-}
-
-func allEmpty(m map[string]string) bool {
-	for _, v := range m {
-		if v != "" {
-			return false
-		}
-	}
-	return true
 }
 
 func sortedKeys(m map[string]string) []string {

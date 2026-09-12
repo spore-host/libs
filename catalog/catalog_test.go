@@ -83,18 +83,17 @@ func TestList_AppsUsable(t *testing.T) {
 	}
 }
 
-// TestContainerApps_HaveBaseAMIAndTag asserts a containerized app carries the
-// shared base-AMI table and a default tag — the two things the launch path needs.
-func TestContainerApps_HaveBaseAMIAndTag(t *testing.T) {
+// TestContainerApps_HaveTag asserts a containerized app carries a default tag —
+// the one thing the launch path needs from the catalog. It intentionally does
+// NOT require a base AMI: the base is resolved from the AWS GPU DLAMI via SSM at
+// launch (spore-host#286/#389), so BaseAMIs is an optional pin, not a requirement.
+func TestContainerApps_HaveTag(t *testing.T) {
 	for _, app := range List() {
 		if !app.Containerized() {
 			continue
 		}
 		if app.TagDefault == "" {
 			t.Errorf("container app %q has no tag_default", app.Name)
-		}
-		if app.BaseAMIs["us-east-1"] == "" {
-			t.Errorf("container app %q has no us-east-1 base AMI", app.Name)
 		}
 	}
 }
