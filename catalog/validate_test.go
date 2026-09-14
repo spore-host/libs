@@ -63,6 +63,21 @@ func TestValidateApps_CatchesDefects(t *testing.T) {
 			wantSub: "not in tags_available",
 		},
 		{
+			name:    "unknown kind",
+			apps:    []AppEntry{{Name: "x", KindRaw: "gui", LaunchCommand: "/x"}},
+			wantSub: "unknown kind",
+		},
+		{
+			name:    "web app without port",
+			apps:    []AppEntry{{Name: "x", KindRaw: "web", Image: "ecr/x", TagDefault: "1"}},
+			wantSub: "web app has no port",
+		},
+		{
+			name:    "web app without image or command",
+			apps:    []AppEntry{{Name: "x", KindRaw: "web", Port: 8888}},
+			wantSub: "web app has no image or launch_command",
+		},
+		{
 			name: "two apps share an image",
 			apps: []AppEntry{
 				{Name: "a", Image: "ecr/shared", TagDefault: "1", BaseAMIs: base},
@@ -95,8 +110,10 @@ func TestValidateApps_AcceptsGoodEntries(t *testing.T) {
 		{Name: "paraview", Image: "ecr/paraview", TagDefault: "5.13.2", TagsAvailable: []string{"5.13.2"}},
 		// Container app with an optional pinned base AMI — also valid.
 		{Name: "custom", Image: "ecr/custom", TagDefault: "1.0", BaseAMIs: map[string]string{"us-east-1": "ami-123"}},
-		{Name: "igv", LaunchCommand: "/opt/igv/igv.sh"},              // legacy CPU app, still valid
-		{Name: "chimerax", Recipe: "infra/amis/containers/chimerax"}, // recipe-only definition (#392)
+		{Name: "igv", LaunchCommand: "/opt/igv/igv.sh"},                                      // legacy CPU app, still valid
+		{Name: "chimerax", Recipe: "infra/amis/containers/chimerax"},                         // recipe-only definition (#392)
+		{Name: "desktop", KindRaw: "desktop"},                                                // bare desktop — no image/recipe/cmd (#591)
+		{Name: "jupyter", KindRaw: "web", Image: "ecr/jupyter", TagDefault: "1", Port: 8888}, // web app (#590)
 	}
 	if errs := validateApps(apps); len(errs) != 0 {
 		t.Errorf("valid apps reported errors: %v", errs)

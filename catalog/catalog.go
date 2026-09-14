@@ -41,7 +41,19 @@ type AppEntry struct {
 	// MinVRAMGiB is the minimum GPU VRAM in GiB (only relevant when GPU is true).
 	MinVRAMGiB int `yaml:"min_vram_gib"`
 	// DCVEnabled indicates the app is configured for NICE DCV application streaming.
+	// Back-compat alias: dcv:true with no explicit Kind means Kind()=="application".
 	DCVEnabled bool `yaml:"dcv"`
+	// KindRaw is the launch shape (#590/#591): "application" (a single Linux GUI
+	// app streamed over a DCV virtual session — the default), "desktop" (a bare
+	// Linux desktop over DCV, no specific app), or "web" (an app that serves its
+	// own web UI on Port, fronted by a TLS reverse proxy — no DCV). Empty resolves
+	// via Kind() to "application". Branch on Kind(), never this raw field.
+	KindRaw string `yaml:"kind"`
+	// Port is the container's HTTP port for a "web" app (e.g. 8888 for Jupyter,
+	// 8080 for code-server). Required when Kind()=="web"; ignored otherwise.
+	Port int `yaml:"port"`
+	// HealthPath is the HTTP path probed for readiness on a "web" app (default "/").
+	HealthPath string `yaml:"health_path"`
 	// IdleTimeoutDefault is the recommended idle timeout (e.g. "20m").
 	IdleTimeoutDefault string `yaml:"idle_timeout_default"`
 	// LaunchCommand is the full path to the application binary on the AMI.
@@ -118,6 +130,30 @@ func (e *AppEntry) ResolveTag(requested string) (string, error) {
 		avail = []string{e.TagDefault}
 	}
 	return "", fmt.Errorf("version %q not available for %s (available: %s)", requested, e.Name, strings.Join(avail, ", "))
+}
+
+// App launch kinds (#590/#591).
+const (
+	KindApplication = "application" // single GUI app streamed over a DCV virtual session (default)
+	KindDesktop     = "desktop"     // a bare Linux desktop over DCV, no specific app
+	KindWeb         = "web"         // app serves its own web UI on Port; TLS-proxied, no DCV
+)
+
+// Kind returns the effective launch kind, defaulting to "application" when unset
+// (so a legacy dcv:true entry stays an application). Branch on this, not the raw
+// field. Unknown values are returned as-is so callers can reject them explicitly.
+func (e *AppEntry) Kind() string {
+	if e.KindRaw == "" {
+		return KindApplication
+	}
+	return e.KindRaw
+}
+
+// UsesDCV reports whether the launch kind streams over NICE/Amazon DCV
+// (application or desktop). A "web" app does not use DCV.
+func (e *AppEntry) UsesDCV() bool {
+	k := e.Kind()
+	return k == KindApplication || k == KindDesktop
 }
 
 // Containerized reports whether the app launches from a container image (#290)

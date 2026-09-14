@@ -15,8 +15,30 @@
 # Images live under public.ecr.aws/f8g1e7l5 — the build account's default ECR
 # Public alias. (A custom "spore-host" alias needs an async AWS approval; switch
 # the image: prefixes if/when it's granted.)
+#
+# Launch kind (#590/#591): each app has a `kind` — "application" (a single GUI
+# app streamed over a DCV virtual session; the default, and what `dcv: true`
+# means), "desktop" (a bare Linux desktop over DCV, no specific app), or "web"
+# (an app that serves its own web UI on `port`, fronted by a TLS reverse proxy —
+# no DCV). Web apps set `port` (+ optional `health_path`, default "/").
 
 apps:
+  - name: desktop
+    description: "A bare Linux desktop — open a terminal and run anything (DCV)"
+    kind: desktop
+    instance_families: [c7i, m7i, c6i]
+    min_vcpus: 2
+    min_memory_gib: 8
+    gpu: false
+    dcv: true
+    idle_timeout_default: 30m
+    aliases: [workspace]
+    license: open-source
+    # No image/recipe: a desktop session installs a desktop environment at boot
+    # and runs it as the DCV session (no application container). Pass a GPU
+    # instance type (--instance-type g6.xlarge) for a GL-accelerated desktop.
+
+
   - name: paraview
     description: "Scientific visualization — CFD, FEA, large mesh"
     instance_families: [g6, g5, g4dn]

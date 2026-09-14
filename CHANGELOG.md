@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`catalog`: app launch `kind`** (spore-host spawn#590/#591). `AppEntry` gains
+  `KindRaw` (yaml `kind`) with `Kind()`/`UsesDCV()` helpers and constants
+  `KindApplication`/`KindDesktop`/`KindWeb`. `application` (the default; `dcv: true`
+  is a back-compat alias) is a single GUI app over a DCV session; `desktop` is a
+  bare Linux desktop over DCV with no app; `web` is an app that serves its own web
+  UI on `Port` (new field, + optional `HealthPath`, default `/`) with no DCV.
+  `Validate()` recognizes the three kinds, requires `port` + a runnable
+  (image/launch_command) for `web`, and exempts `desktop` from the
+  image/recipe/launch_command requirement. Shipped a built-in `desktop` catalog
+  entry. No consumer signature breaks (all additive).
+
 ## [0.44.0] - 2026-09-11
 
 ### Changed
