@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-09-14
+
 ### Added
 - **`catalog`: app launch `kind`** (spore-host spawn#590/#591). `AppEntry` gains
   `KindRaw` (yaml `kind`) with `Kind()`/`UsesDCV()` helpers and constants
@@ -287,7 +289,8 @@ of this and earlier tags (`update`, `i18n`, `catalog`, `pricing` packages).
 
 ---
 
-[Unreleased]: https://github.com/spore-host/libs/compare/v0.44.0...HEAD
+[Unreleased]: https://github.com/spore-host/libs/compare/v0.45.0...HEAD
+[0.45.0]: https://github.com/spore-host/libs/compare/v0.44.0...v0.45.0
 [0.44.0]: https://github.com/spore-host/libs/compare/v0.43.3...v0.44.0
 [0.43.3]: https://github.com/spore-host/libs/compare/v0.43.2...v0.43.3
 [0.43.2]: https://github.com/spore-host/libs/compare/v0.43.1...v0.43.2
