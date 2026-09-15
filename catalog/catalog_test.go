@@ -72,11 +72,15 @@ func TestList_Sorted(t *testing.T) {
 	}
 }
 
-// TestList_AppsUsable asserts every shipped app is usable by one of the three
-// models: a container image (launchable), a legacy launch_command (baked AMI),
-// or a public recipe (buildable definition — recipe/cake split, #392).
+// TestList_AppsUsable asserts every shipped app is usable by one of the models:
+// a container image (launchable), a legacy launch_command (baked AMI), or a
+// public recipe (buildable definition — recipe/cake split, #392). A desktop kind
+// is exempt — it runs a desktop environment installed at boot, no app (#591).
 func TestList_AppsUsable(t *testing.T) {
 	for _, app := range List() {
+		if app.Kind() == KindDesktop {
+			continue
+		}
 		if app.Image == "" && app.LaunchCommand == "" && app.Recipe == "" {
 			t.Errorf("app %q has no image, launch_command, or recipe", app.Name)
 		}
@@ -180,6 +184,42 @@ func TestEmbeddedCatalogIsPublic(t *testing.T) {
 			t.Errorf("shipped catalog app %q has non-public image %q (%s) — private images belong in a local overlay (#392)",
 				app.Name, app.Image, app.ImageVisibility())
 		}
+	}
+}
+
+func TestKind(t *testing.T) {
+	cases := []struct {
+		name     string
+		e        AppEntry
+		wantKind string
+		wantDCV  bool
+	}{
+		{"empty defaults to application", AppEntry{}, KindApplication, true},
+		{"dcv:true stays application", AppEntry{DCVEnabled: true}, KindApplication, true},
+		{"explicit desktop", AppEntry{KindRaw: "desktop"}, KindDesktop, true},
+		{"explicit web is not DCV", AppEntry{KindRaw: "web"}, KindWeb, false},
+	}
+	for _, c := range cases {
+		if got := c.e.Kind(); got != c.wantKind {
+			t.Errorf("%s: Kind() = %q, want %q", c.name, got, c.wantKind)
+		}
+		if got := c.e.UsesDCV(); got != c.wantDCV {
+			t.Errorf("%s: UsesDCV() = %v, want %v", c.name, got, c.wantDCV)
+		}
+	}
+}
+
+func TestEmbeddedDesktopEntry(t *testing.T) {
+	e, ok := Lookup("desktop")
+	if !ok {
+		t.Fatal("desktop entry missing from catalog")
+	}
+	if e.Kind() != KindDesktop {
+		t.Errorf("desktop entry Kind() = %q, want %q", e.Kind(), KindDesktop)
+	}
+	// A desktop has no image/recipe/launch_command and must still validate.
+	if e.Image != "" || e.Recipe != "" || e.LaunchCommand != "" {
+		t.Errorf("desktop entry should carry no image/recipe/launch_command; got image=%q recipe=%q cmd=%q", e.Image, e.Recipe, e.LaunchCommand)
 	}
 }
 

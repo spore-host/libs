@@ -56,11 +56,29 @@ func validateApps(apps []AppEntry) []error {
 	images := map[string]string{} // image → first app that used it
 
 	for _, app := range apps {
-		if app.Image == "" && app.LaunchCommand == "" && app.Recipe == "" {
+		// A desktop kind legitimately has no image/launch_command/recipe — it runs
+		// a desktop environment installed at boot, not a specific app (#591).
+		if app.Kind() != KindDesktop && app.Image == "" && app.LaunchCommand == "" && app.Recipe == "" {
 			errs = append(errs, fmt.Errorf("%s: not usable (no image, no launch_command, no recipe)", app.Name))
 		}
 		if len(app.AMIs) != 0 {
 			errs = append(errs, fmt.Errorf("%s: uses the deprecated per-app amis table (%v) — use image + base_amis (#389)", app.Name, sortedKeys(app.AMIs)))
+		}
+		// Launch kind must be recognized (#590/#591); empty is fine (→ application).
+		switch app.KindRaw {
+		case "", KindApplication, KindDesktop, KindWeb:
+		default:
+			errs = append(errs, fmt.Errorf("%s: unknown kind %q (want %s, %s, or %s)", app.Name, app.KindRaw, KindApplication, KindDesktop, KindWeb))
+		}
+		// A web app serves its own UI on a port, so it needs Port and something to
+		// run (image or launch_command). DCV kinds ignore Port.
+		if app.Kind() == KindWeb {
+			if app.Port <= 0 {
+				errs = append(errs, fmt.Errorf("%s: web app has no port", app.Name))
+			}
+			if app.Image == "" && app.LaunchCommand == "" {
+				errs = append(errs, fmt.Errorf("%s: web app has no image or launch_command to run", app.Name))
+			}
 		}
 		if !app.Containerized() {
 			continue
