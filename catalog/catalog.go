@@ -54,6 +54,12 @@ type AppEntry struct {
 	Port int `yaml:"port"`
 	// HealthPath is the HTTP path probed for readiness on a "web" app (default "/").
 	HealthPath string `yaml:"health_path"`
+	// Args are extra arguments appended to the container run (after the image),
+	// e.g. ["--bind-addr","0.0.0.0:8080","--auth","none"] for code-server. Only
+	// meaningful for a containerized app; ignored otherwise. Web apps typically
+	// need these to bind 0.0.0.0 (so the published port is reachable) and to run
+	// without their own auth (the spored :443 proxy gates access with a token).
+	Args []string `yaml:"args"`
 	// IdleTimeoutDefault is the recommended idle timeout (e.g. "20m").
 	IdleTimeoutDefault string `yaml:"idle_timeout_default"`
 	// LaunchCommand is the full path to the application binary on the AMI.
