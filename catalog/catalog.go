@@ -64,9 +64,10 @@ type AppEntry struct {
 	License string `yaml:"license"`
 
 	// Container-based catalog (#290). The app ships as a Docker image pulled at
-	// launch onto a single shared DCV base AMI, instead of a baked per-app AMI —
-	// which removes the per-app-per-region AMI table that drifted into dangling
-	// and duplicated IDs (#389).
+	// launch onto a base AMI resolved from the AWS GPU DLAMI via SSM at launch,
+	// with DCV installed at boot (spore-host#286/#389) — instead of a baked per-app
+	// AMI. This removed the per-app-per-region AMI table that drifted into dangling
+	// and duplicated IDs (#389); there is no owned/shared base AMI.
 
 	// Image is the container image (without tag) the app runs from, e.g.
 	// "public.ecr.aws/spore-host/paraview". Empty for a not-yet-containerized app.
