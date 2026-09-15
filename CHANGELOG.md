@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`catalog`: `AppEntry.Args`** (yaml `args`) — extra arguments appended to a
+  containerized app's `docker run` (after the image), e.g. code-server's
+  `--bind-addr 0.0.0.0:8080 --auth none`. Lets web apps bind all interfaces and
+  run without their own auth (the spored :443 proxy gates access). spore-host
+  spawn#590.
+
 ## [0.45.0] - 2026-09-14
 
 ### Added
