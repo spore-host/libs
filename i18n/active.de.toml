@@ -1382,7 +1382,7 @@ other = "Lagotto überwacht die Verfügbarkeit von EC2-Instanztypen, die derzeit
 other = "Kapazitätsüberwachung für einen Instanztyp erstellen"
 
 [lagotto.watch.long]
-other = "EC2-Instanzverfügbarkeit in Regionen und Verfügbarkeitszonen überwachen.\n\nDas Muster unterstützt Platzhalter: \"p5.*\" passt auf alle p5-Größen, \"g5.xlarge\" ist exakt.\nWenn Kapazität gefunden wird, die Ihren Kriterien entspricht, wird die konfigurierte Aktion ausgeführt."
+other = "EC2-Instanzverfügbarkeit in Regionen und Verfügbarkeitszonen überwachen.\n\nDas Muster unterstützt Platzhalter: \"p5.*\" passt auf alle p5-Größen, \"g5.xlarge\" ist exakt; eine kommagetrennte Liste passt auf beliebige von mehreren Typen (z. B. \"g6.xlarge,g6.2xlarge\").\nWenn Kapazität gefunden wird, die Ihren Kriterien entspricht, wird die konfigurierte Aktion ausgeführt."
 
 [lagotto.list.short]
 other = "Ihre Überwachungen auflisten"

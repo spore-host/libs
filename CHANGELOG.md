@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+- **`i18n`: `lagotto.watch.long` now documents comma-separated instance-type
+  patterns** in all six locales — lagotto v0.56.0 added comma-list support
+  (spore-host/lagotto#135) but its `watch --help` long text is sourced from this
+  catalog, so the CLI help hadn't mentioned it. No key changes.
+
 ## [0.49.0] - 2026-09-15
 
 ### Added
