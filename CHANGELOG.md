@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`catalog`: built-in `code-server` web app** (spore-host spawn#590). VS Code in
+  the browser — a `kind: web` entry on the public `codercom/code-server` image,
+  running auth-less on 0.0.0.0 inside the container (access is gated by spored's
+  :443 proxy token). First shipped web-UI catalog entry; real-instance validated.
+
 ## [0.46.0] - 2026-09-15
 
 ### Added

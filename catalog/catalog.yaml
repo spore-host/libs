@@ -23,6 +23,24 @@
 # no DCV). Web apps set `port` (+ optional `health_path`, default "/").
 
 apps:
+  - name: code-server
+    description: "VS Code in the browser (code-server)"
+    kind: web
+    port: 8080
+    instance_families: [c7i, m7i]
+    min_vcpus: 2
+    min_memory_gib: 4
+    gpu: false
+    idle_timeout_default: 30m
+    aliases: [vscode]
+    license: open-source
+    # Public upstream image. Runs auth-less on 0.0.0.0 inside the container —
+    # access is gated by spored's :443 proxy token (spawn#590), not by the app.
+    image: codercom/code-server
+    tag_default: latest
+    visibility: public
+    args: [--bind-addr, "0.0.0.0:8080", --auth, none]
+
   - name: desktop
     description: "A bare Linux desktop — open a terminal and run anything (DCV)"
     kind: desktop
