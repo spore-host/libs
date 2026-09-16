@@ -1625,7 +1625,7 @@ other = "Lagotto vigila la disponibilidad de tipos de instancia EC2 que no está
 other = "Crear vigilancia de capacidad para un tipo de instancia"
 
 [lagotto.watch.long]
-other = "Vigilar disponibilidad de instancias EC2 en regiones y zonas de disponibilidad.\n\nEl patrón admite comodines: \"p5.*\" coincide con todos los tamaños p5, \"g5.xlarge\" es exacto.\nCuando se encuentra capacidad que coincide con tus criterios, se ejecuta la acción configurada."
+other = "Vigilar disponibilidad de instancias EC2 en regiones y zonas de disponibilidad.\n\nEl patrón admite comodines: \"p5.*\" coincide con todos los tamaños p5, \"g5.xlarge\" es exacto; una lista separada por comas coincide con cualquiera de varios tipos (p. ej., \"g6.xlarge,g6.2xlarge\").\nCuando se encuentra capacidad que coincide con tus criterios, se ejecuta la acción configurada."
 
 [lagotto.list.short]
 other = "Listar tus vigilancias"

@@ -1382,7 +1382,7 @@ other = "Lagotto surveille la disponibilité des types d'instances EC2 actuellem
 other = "Créer une surveillance de capacité pour un type d'instance"
 
 [lagotto.watch.long]
-other = "Surveiller la disponibilité des instances EC2 dans les régions et zones de disponibilité.\n\nLe modèle prend en charge les caractères génériques : \"p5.*\" correspond à toutes les tailles p5, \"g5.xlarge\" est exact.\nLorsque de la capacité correspondant à vos critères est trouvée, l'action configurée est exécutée."
+other = "Surveiller la disponibilité des instances EC2 dans les régions et zones de disponibilité.\n\nLe modèle prend en charge les caractères génériques : \"p5.*\" correspond à toutes les tailles p5, \"g5.xlarge\" est exact ; une liste séparée par des virgules correspond à l'un de plusieurs types (par ex. \"g6.xlarge,g6.2xlarge\").\nLorsque de la capacité correspondant à vos critères est trouvée, l'action configurée est exécutée."
 
 [lagotto.list.short]
 other = "Lister vos surveillances"

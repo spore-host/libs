@@ -1638,7 +1638,7 @@ other = "Lagotto monitora a disponibilidade de tipos de instância EC2 que não 
 other = "Criar monitoramento de capacidade para um tipo de instância"
 
 [lagotto.watch.long]
-other = "Monitorar disponibilidade de instâncias EC2 em regiões e zonas de disponibilidade.\n\nO padrão suporta curingas: \"p5.*\" corresponde a todos os tamanhos p5, \"g5.xlarge\" é exato.\nQuando capacidade correspondente aos seus critérios é encontrada, a ação configurada é executada."
+other = "Monitorar disponibilidade de instâncias EC2 em regiões e zonas de disponibilidade.\n\nO padrão suporta curingas: \"p5.*\" corresponde a todos os tamanhos p5, \"g5.xlarge\" é exato; uma lista separada por vírgulas corresponde a qualquer um de vários tipos (ex.: \"g6.xlarge,g6.2xlarge\").\nQuando capacidade correspondente aos seus critérios é encontrada, a ação configurada é executada."
 
 [lagotto.list.short]
 other = "Listar seus monitoramentos"
