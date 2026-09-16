@@ -41,6 +41,25 @@ apps:
     visibility: public
     args: [--bind-addr, "0.0.0.0:8080", --auth, none]
 
+  - name: openrefine
+    description: "Data cleaning & transformation (OpenRefine)"
+    kind: web
+    port: 3333
+    instance_families: [c7i, m7i]
+    min_vcpus: 2
+    min_memory_gib: 8
+    gpu: false
+    idle_timeout_default: 30m
+    aliases: [refine]
+    license: open-source
+    # OpenRefine ships no official image — we build one from the upstream release
+    # (spore-host/app-images), which binds 0.0.0.0:3333 auth-less (access gated by
+    # spored's :443 proxy token). No args needed. See the app-images repo for the
+    # "bring your own app to spawn" tutorial.
+    image: ghcr.io/spore-host/openrefine
+    tag_default: "3.10.1"
+    visibility: public
+
   - name: jupyter
     description: "JupyterLab notebooks in the browser"
     kind: web

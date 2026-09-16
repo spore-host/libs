@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`catalog`: built-in `openrefine` web app** (spore-host spawn#590). OpenRefine
+  data-cleaning UI — a `kind: web` entry on `ghcr.io/spore-host/openrefine`, an
+  image we build from the official upstream release (OpenRefine ships none) in
+  the new `spore-host/app-images` repo; runs auth-less on 0.0.0.0:3333, gated by
+  spored's :443 proxy token. Joins code-server + jupyter.
+
 ## [0.48.0] - 2026-09-15
 
 ### Added
