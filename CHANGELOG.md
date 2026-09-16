@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.48.0] - 2026-09-15
+
 ### Added
 - **`catalog`: built-in `jupyter` web app** (spore-host spawn#590). JupyterLab in
   the browser — a `kind: web` entry on the public `quay.io/jupyter/base-notebook`
@@ -313,7 +315,8 @@ of this and earlier tags (`update`, `i18n`, `catalog`, `pricing` packages).
 
 ---
 
-[Unreleased]: https://github.com/spore-host/libs/compare/v0.47.0...HEAD
+[Unreleased]: https://github.com/spore-host/libs/compare/v0.48.0...HEAD
+[0.48.0]: https://github.com/spore-host/libs/compare/v0.47.0...v0.48.0
 [0.47.0]: https://github.com/spore-host/libs/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/spore-host/libs/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/spore-host/libs/compare/v0.44.0...v0.45.0
