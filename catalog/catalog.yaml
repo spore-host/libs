@@ -41,6 +41,25 @@ apps:
     visibility: public
     args: [--bind-addr, "0.0.0.0:8080", --auth, none]
 
+  - name: jupyter
+    description: "JupyterLab notebooks in the browser"
+    kind: web
+    port: 8888
+    instance_families: [c7i, m7i]
+    min_vcpus: 2
+    min_memory_gib: 8
+    gpu: false
+    idle_timeout_default: 30m
+    aliases: [jupyterlab, notebook]
+    license: open-source
+    # Public upstream image. Runs token-less on 0.0.0.0 (access gated by spored's
+    # :443 proxy token, spawn#590); allow_origin/trust_xheaders let it work behind
+    # the reverse proxy. Args validated against the image locally.
+    image: quay.io/jupyter/base-notebook
+    tag_default: latest
+    visibility: public
+    args: [start-notebook.py, "--IdentityProvider.token=", "--ServerApp.ip=0.0.0.0", "--ServerApp.allow_origin=*", "--ServerApp.trust_xheaders=True"]
+
   - name: desktop
     description: "A bare Linux desktop — open a terminal and run anything (DCV)"
     kind: desktop

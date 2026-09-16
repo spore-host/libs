@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`catalog`: built-in `jupyter` web app** (spore-host spawn#590). JupyterLab in
+  the browser — a `kind: web` entry on the public `quay.io/jupyter/base-notebook`
+  image, running token-less on 0.0.0.0 (access gated by spored's :443 proxy
+  token) with `allow_origin`/`trust_xheaders` set for the reverse proxy. Args
+  validated against the image. (OpenRefine skipped — no canonical public image.)
+
 ## [0.47.0] - 2026-09-15
 
 ### Added
