@@ -5,8 +5,24 @@ import (
 	"strings"
 )
 
-// EC2Pricing holds hourly rates for EC2 instance types by region
-// Prices are approximate On-Demand rates as of 2026-01 (subject to change)
+// EC2Pricing holds approximate hourly On-Demand rates for a small, deliberately
+// incomplete set of EC2 instance types, by region (rates as of 2026-01).
+//
+// This table exists for OFFLINE use — a rough estimate when no credentials or no
+// network are available. It is **not** a pricing database and must not be grown
+// into one: a hand-maintained table of AWS prices is stale the day it is written,
+// and the staleness is invisible at the call site.
+//
+// truffle is the suite's pricing authority for real rates. It queries the AWS
+// Price List API and falls back to this table by *exact* (region, instanceType)
+// lookup, erroring when the table has no such entry — see
+// truffle/pkg/aws/pricing.go's staticOnDemandPricer. Use that, not this, whenever
+// a price will be shown to a user or enforced against a spend cap.
+//
+// Coverage is skewed towards older general-purpose/compute families. In
+// particular there is **no GPU family newer than p4d**, so any current-generation
+// accelerator (g6, g6e, g7e, p5, p5e, p6-*, trn*, inf*) is absent by design and
+// will not resolve here.
 var EC2Pricing = map[string]map[string]float64{
 	"us-east-1": {
 		// General Purpose
@@ -154,100 +170,39 @@ var EC2Pricing = map[string]map[string]float64{
 	},
 }
 
-// GetEC2HourlyRate returns the hourly On-Demand rate for an instance type in a region
-// Returns a default estimate if exact pricing not found
-func GetEC2HourlyRate(region, instanceType string) float64 {
-	// Normalize region and instance type
-	region = strings.ToLower(strings.TrimSpace(region))
-	instanceType = strings.ToLower(strings.TrimSpace(instanceType))
+// GetEC2HourlyRate returns the hourly On-Demand rate for instanceType in region
+// from the static [EC2Pricing] table, by exact match.
+//
+// It returns an error when the table has no entry for that exact (region,
+// instanceType) pair. It does NOT substitute a price: a caller that cannot be
+// told "I don't know" has no way to distinguish a real rate from an invented one,
+// and an invented rate is worse than no rate because it looks usable.
+//
+// This previously returned a bare float64 and guessed on a miss (#29): an unknown
+// region silently borrowed us-east-1's prices, and an unknown instance type fell
+// through to a per-family-size estimate — unknown family 0.10 × unknown size 2.0.
+// For modern accelerators the guess was 4-12x low and carried err == nil, so
+// g7e.4xlarge came back as $0.80 against a real $3.9982, and p5e.48xlarge as
+// $9.60 for a type AWS publishes no on-demand price for at all. Callers used
+// those numbers to quote costs and size budgets.
+//
+// For a real rate, prefer truffle's pricer (live AWS Price List, with this table
+// as an exact-match fallback). See [EC2Pricing] for why this table is small.
+func GetEC2HourlyRate(region, instanceType string) (float64, error) {
+	regionKey := strings.ToLower(strings.TrimSpace(region))
+	typeKey := strings.ToLower(strings.TrimSpace(instanceType))
 
-	// Check if we have pricing for this region
-	regionPricing, ok := EC2Pricing[region]
+	regionPricing, ok := EC2Pricing[regionKey]
 	if !ok {
-		// Use us-east-1 as fallback for unknown regions
-		regionPricing = EC2Pricing["us-east-1"]
+		return 0, fmt.Errorf("no static price table for region %q (static table covers %d regions; use truffle for a live price)", region, len(EC2Pricing))
 	}
 
-	// Check if we have pricing for this instance type
-	if price, ok := regionPricing[instanceType]; ok {
-		return price
+	price, ok := regionPricing[typeKey]
+	if !ok || price <= 0 {
+		return 0, fmt.Errorf("no static price for %q in %q (not in the static table; use truffle for a live price)", instanceType, region)
 	}
 
-	// Fallback: estimate based on instance family
-	return estimatePriceByFamily(instanceType)
-}
-
-// estimatePriceByFamily provides rough estimates for instance types not in the table.
-// Base prices are per-vCPU-hour rates (the "large" price / 2 vCPUs). Size multipliers
-// reflect vCPU count relative to "large" (2 vCPUs).
-func estimatePriceByFamily(instanceType string) float64 {
-	parts := strings.Split(instanceType, ".")
-	if len(parts) < 2 {
-		return 0.10
-	}
-
-	family := parts[0]
-	size := parts[1]
-
-	// Base prices: the "large" (2 vCPU) hourly rate for each family.
-	// For GPU families without a "large" size, the base is calibrated so that
-	// the family's starting size (typically xlarge or 2xlarge) estimates correctly.
-	// Multipliers below are relative to "large" = 1.0.
-	basePriceLarge := map[string]float64{
-		"t2":   0.0928,
-		"t3":   0.0832,
-		"t3a":  0.0752,
-		"t4g":  0.0672,
-		"m5":   0.096,
-		"m5a":  0.086,
-		"m5n":  0.119,
-		"m6i":  0.096,
-		"m6a":  0.086,
-		"m7i":  0.1008,
-		"c5":   0.085,
-		"c5a":  0.077,
-		"c5n":  0.108,
-		"c6i":  0.085,
-		"c6a":  0.077,
-		"c7i":  0.0893,
-		"r5":   0.126,
-		"r5a":  0.113,
-		"r6i":  0.126,
-		"g4dn": 0.263,
-		"g5":   0.503,
-		"p3":   0.765,
-		"p4d":  0.6827,
-	}
-
-	// Multipliers relative to "large" (1.0)
-	sizeMultiplier := map[string]float64{
-		"nano":     0.0625,
-		"micro":    0.125,
-		"small":    0.25,
-		"medium":   0.5,
-		"large":    1.0,
-		"xlarge":   2.0,
-		"2xlarge":  4.0,
-		"4xlarge":  8.0,
-		"8xlarge":  16.0,
-		"12xlarge": 24.0,
-		"16xlarge": 32.0,
-		"24xlarge": 48.0,
-		"48xlarge": 96.0,
-		"metal":    48.0,
-	}
-
-	base, ok := basePriceLarge[family]
-	if !ok {
-		base = 0.10
-	}
-
-	multiplier, ok := sizeMultiplier[size]
-	if !ok {
-		multiplier = 2.0 // default to xlarge
-	}
-
-	return base * multiplier
+	return price, nil
 }
 
 // FormatCost formats a cost value as a currency string

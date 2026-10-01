@@ -1,6 +1,7 @@
 package pricing
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -57,29 +58,14 @@ func TestGetEC2HourlyRate(t *testing.T) {
 			instanceType: "  t3.micro  ",
 			expected:     0.0104,
 		},
-		{
-			name:         "Unknown region (fallback to us-east-1)",
-			region:       "unknown-region",
-			instanceType: "t3.micro",
-			expected:     0.0104, // Uses us-east-1 pricing
-		},
-		{
-			name:         "Unknown instance type (uses estimation)",
-			region:       "us-east-1",
-			instanceType: "unknown.xlarge",
-			expected:     0.2, // Estimated: 0.10 (default base) * 2.0 (xlarge multiplier)
-		},
-		{
-			name:         "Region exists but instance type missing (uses estimation)",
-			region:       "us-east-1",
-			instanceType: "m7i.12xlarge",
-			expected:     2.4192, // Estimated: 0.1008 * 24.0
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := GetEC2HourlyRate(tt.region, tt.instanceType)
+			result, err := GetEC2HourlyRate(tt.region, tt.instanceType)
+			if err != nil {
+				t.Fatalf("expected a price for %s in %s, got error: %v", tt.instanceType, tt.region, err)
+			}
 			if !floatEqual(result, tt.expected, 0.00001) {
 				t.Errorf("expected %.4f, got %.4f", tt.expected, result)
 			}
@@ -87,84 +73,48 @@ func TestGetEC2HourlyRate(t *testing.T) {
 	}
 }
 
-func TestEstimatePriceByFamily(t *testing.T) {
+// TestGetEC2HourlyRateErrorsRatherThanGuessing is the regression guard for #29:
+// a miss must be an error, never a substituted or estimated price.
+//
+// The want* values are what the old implementation actually returned (measured
+// against libs v0.49.0), so each case fails loudly if the guessing ever returns.
+func TestGetEC2HourlyRateErrorsRatherThanGuessing(t *testing.T) {
 	tests := []struct {
-		name         string
-		instanceType string
-		expected     float64
+		name          string
+		region        string
+		instanceType  string
+		oldFabricated float64 // what the pre-#29 code returned
+		why           string
 	}{
-		{
-			name:         "t3.micro",
-			instanceType: "t3.micro",
-			expected:     0.0104, // 0.0832 * 0.125
-		},
-		{
-			name:         "t3.small",
-			instanceType: "t3.small",
-			expected:     0.0208, // 0.0832 * 0.25
-		},
-		{
-			name:         "t3.xlarge",
-			instanceType: "t3.xlarge",
-			expected:     0.1664, // 0.0832 * 2.0
-		},
-		{
-			name:         "m5.large",
-			instanceType: "m5.large",
-			expected:     0.096, // 0.096 * 1.0
-		},
-		{
-			name:         "c5.4xlarge",
-			instanceType: "c5.4xlarge",
-			expected:     0.68, // 0.085 * 8.0
-		},
-		{
-			name:         "r5.2xlarge",
-			instanceType: "r5.2xlarge",
-			expected:     0.504, // 0.126 * 4.0
-		},
-		{
-			name:         "g5.xlarge",
-			instanceType: "g5.xlarge",
-			expected:     1.006, // 0.503 * 2.0
-		},
-		{
-			name:         "Unknown family (uses default)",
-			instanceType: "unknown.xlarge",
-			expected:     0.2, // 0.10 * 2.0
-		},
-		{
-			name:         "Unknown size (uses xlarge default)",
-			instanceType: "t3.unknown",
-			expected:     0.1664, // 0.0832 * 2.0
-		},
-		{
-			name:         "Invalid format (no dot)",
-			instanceType: "invalid",
-			expected:     0.10, // Default
-		},
-		{
-			name:         "Metal instance",
-			instanceType: "c5.metal",
-			expected:     4.08, // 0.085 * 48.0
-		},
-		{
-			name:         "t4g.nano",
-			instanceType: "t4g.nano",
-			expected:     0.0042, // 0.0672 * 0.0625
-		},
-		{
-			name:         "m6i.24xlarge",
-			instanceType: "m6i.24xlarge",
-			expected:     4.608, // 0.096 * 48.0
-		},
+		// Modern accelerators: absent from the table, so the old code fell through
+		// to unknown-family 0.10 x size-multiplier. Real rates from the AWS Price
+		// List (us-east-1, 2026-07) are in the comments.
+		{"g7e.4xlarge", "us-east-1", "g7e.4xlarge", 0.80, "real $3.9982 — was 5.0x low"},
+		{"p5.4xlarge", "us-east-1", "p5.4xlarge", 0.80, "real $6.88 — was 8.6x low"},
+		{"g6e.12xlarge", "us-east-1", "g6e.12xlarge", 2.40, "real $10.49 — was 4.4x low"},
+		{"p6-b200.48xlarge", "us-east-1", "p6-b200.48xlarge", 9.60, "real $113.93 — was 11.9x low"},
+		{"p5e.48xlarge", "us-east-1", "p5e.48xlarge", 9.60, "AWS publishes NO on-demand price — was pure fabrication"},
+
+		// Unknown family / size / region: the three substitution paths.
+		{"unknown family", "us-east-1", "bogus.xlarge", 0.20, "unknown family 0.10 x xlarge 2.0"},
+		{"unknown size", "us-east-1", "t3.unknown", 0.1664, "unknown size defaulted to the xlarge multiplier"},
+		{"region absent from table", "sa-east-1", "c5.xlarge", 0.17, "silently borrowed us-east-1's price"},
+		{"region present, type absent", "us-east-1", "m7i.12xlarge", 2.4192, "estimated 0.1008 x 24.0"},
+		{"no dot in type", "us-east-1", "invalid", 0.10, "bare 0.10 default"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := estimatePriceByFamily(tt.instanceType)
-			if !floatEqual(result, tt.expected, 0.00001) {
-				t.Errorf("expected %.4f, got %.4f", tt.expected, result)
+			got, err := GetEC2HourlyRate(tt.region, tt.instanceType)
+			if err == nil {
+				t.Fatalf("GetEC2HourlyRate(%q, %q) = %.4f with nil error — a miss must error, not guess (%s)",
+					tt.region, tt.instanceType, got, tt.why)
+			}
+			if got != 0 {
+				t.Errorf("on error the price must be 0, got %.4f", got)
+			}
+			if floatEqual(got, tt.oldFabricated, 0.00001) {
+				t.Errorf("returned the old fabricated value %.4f — the #29 guessing is back", tt.oldFabricated)
 			}
 		})
 	}
@@ -436,7 +386,9 @@ func TestEstimateSweepCost(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := EstimateSweepCost(tt.params)
+			// nil resolver => StaticRateResolver; every type above is in the
+			// static table, so these assert the offline-but-honest default.
+			result, err := EstimateSweepCost(tt.params, nil)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("expected error: %v, got: %v", tt.wantErr, err)
 				return
@@ -444,8 +396,89 @@ func TestEstimateSweepCost(t *testing.T) {
 
 			if err == nil && tt.checkResult != nil {
 				tt.checkResult(t, result)
+				if result.Partial() {
+					t.Errorf("every row here is priceable, so the estimate must not be partial; unpriced=%v", result.UnpricedRows)
+				}
 			}
 		})
+	}
+}
+
+// TestEstimateSweepCostUsesInjectedResolver proves the resolver seam is actually
+// used, rather than the static table being consulted behind the caller's back.
+func TestEstimateSweepCostUsesInjectedResolver(t *testing.T) {
+	var asked [][2]string
+	resolver := func(region, instanceType string) (float64, error) {
+		asked = append(asked, [2]string{region, instanceType})
+		return 10.0, nil // deliberately unlike any static-table value
+	}
+
+	est, err := EstimateSweepCost(&ParamFileFormat{
+		Defaults: map[string]interface{}{"instance_type": "t3.micro", "region": "us-east-1", "ttl": "2h"},
+		Params:   []map[string]interface{}{{"name": "job1"}},
+	}, resolver)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(asked) != 1 || asked[0] != [2]string{"us-east-1", "t3.micro"} {
+		t.Errorf("resolver should have been asked once for (us-east-1, t3.micro), got %v", asked)
+	}
+	// 10.0/hr x 2h = 20.0. The static table's t3.micro is 0.0104, so a wrong
+	// number here means the injected resolver was bypassed.
+	if !floatEqual(est.ComputeCost, 20.0, 0.00001) {
+		t.Errorf("expected compute 20.00 from the injected resolver, got %.4f", est.ComputeCost)
+	}
+	if est.PricedRows != 1 || est.Partial() {
+		t.Errorf("expected 1 priced row and a complete estimate, got priced=%d unpriced=%v", est.PricedRows, est.UnpricedRows)
+	}
+}
+
+// TestEstimateSweepCostPartialWhenRowsUnpriceable is the #29 guard at the sweep
+// level: an unpriceable row must be named and excluded, never valued at a guess
+// and never silently at $0 inside a total that looks complete.
+func TestEstimateSweepCostPartialWhenUnpriceable(t *testing.T) {
+	resolver := func(region, instanceType string) (float64, error) {
+		if instanceType == "g6e.12xlarge" {
+			return 10.49, nil
+		}
+		return 0, fmt.Errorf("no price for %s in %s", instanceType, region)
+	}
+
+	est, err := EstimateSweepCost(&ParamFileFormat{
+		Defaults: map[string]interface{}{"region": "us-east-1", "ttl": "1h"},
+		Params: []map[string]interface{}{
+			{"name": "priceable", "instance_type": "g6e.12xlarge"},
+			{"name": "unpriceable", "instance_type": "p5e.48xlarge"},
+			{"name": "dup-unpriceable", "instance_type": "p5e.48xlarge"},
+		},
+	}, resolver)
+	if err != nil {
+		t.Fatalf("a mixed sweep should still estimate, got error: %v", err)
+	}
+
+	if est.PricedRows != 1 {
+		t.Errorf("expected 1 priced row, got %d", est.PricedRows)
+	}
+	if !floatEqual(est.ComputeCost, 10.49, 0.00001) {
+		t.Errorf("compute must count only the priced row (10.49), got %.4f", est.ComputeCost)
+	}
+	if !est.Partial() {
+		t.Fatal("estimate must report Partial() when a row could not be priced")
+	}
+	if want := []string{"p5e.48xlarge@us-east-1"}; len(est.UnpricedRows) != 1 || est.UnpricedRows[0] != want[0] {
+		t.Errorf("expected deduplicated unpriced rows %v, got %v", want, est.UnpricedRows)
+	}
+
+	// Both display forms must disclose the shortfall — a total that reads as
+	// complete over a partial sum is the original defect restated.
+	for name, out := range map[string]string{"Display": est.Display(), "DisplayCompact": est.DisplayCompact()} {
+		if !strings.Contains(out, "p5e.48xlarge@us-east-1") {
+			t.Errorf("%s must name the unpriced row, got:\n%s", name, out)
+		}
+		if !strings.Contains(strings.ToUpper(out), "FLOOR") {
+			t.Errorf("%s must mark the total as a floor, got:\n%s", name, out)
+		}
 	}
 }
 
