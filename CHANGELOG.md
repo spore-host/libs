@@ -8,6 +8,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING — `pricing.GetEC2HourlyRate` now returns `(float64, error)`** and
+  resolves prices by *exact* `(region, instanceType)` match only
+  (spore-host/libs#29). It previously returned a bare `float64` and never failed,
+  which meant callers could not distinguish a real rate from an invented one.
+  Migration: handle the error. There is no replacement for the old guessing
+  behaviour by design — if you need a rate for a type outside the static table,
+  use truffle's pricer (live AWS Price List), which is the suite's pricing
+  authority.
+- **BREAKING — `pricing.EstimateSweepCost` takes a `RateResolver`**:
+  `EstimateSweepCost(params, rate)`. Pass `nil` for the previous offline
+  behaviour (now honest: `StaticRateResolver`, exact match or error), or inject a
+  resolver backed by a live pricing source. libs cannot depend on truffle
+  (truffle depends on libs), so the pricing authority is supplied by the caller.
+- **`CostEstimate` reports what it could not price.** New `PricedRows`,
+  `UnpricedRows` (`"type@region"`, deduplicated and sorted) and `Partial()`.
+  Rows that cannot be priced are excluded from the totals and named, and both
+  `Display()` and `DisplayCompact()` now label a partial total as a **floor**
+  rather than presenting it as the cost of the whole sweep.
+
+### Fixed
+- **`pricing` no longer fabricates EC2 prices** (spore-host/libs#29). For any
+  instance family absent from the static table — which is every GPU family newer
+  than `p4d` — the old code fell through to "unknown family $0.10/vCPU-hr ×
+  size multiplier" and returned it with `err == nil`. Measured against the AWS
+  Price List: `g7e.4xlarge` was quoted at `$0.80` against a real `$3.9982` (5.0×
+  low), `p5.4xlarge` at `$0.80` against `$6.88` (8.6× low), `g6e.12xlarge` at
+  `$2.40` against `$10.49` (4.4× low), `p6-b200.48xlarge` at `$9.60` against
+  `$113.93` (11.9× low), and `p5e.48xlarge` at `$9.60` — a type for which AWS
+  publishes no on-demand price at all. An unknown *region* silently borrowed
+  us-east-1's prices (`sa-east-1 c5.xlarge` → `$0.17`), and an unknown *size*
+  silently used the `xlarge` multiplier. All of these are now errors.
+  `estimatePriceByFamily` is removed, along with the tests that asserted its
+  output.
+
 ### Documentation
 - **`i18n`: `lagotto.watch.long` now documents comma-separated instance-type
   patterns** in all six locales — lagotto v0.56.0 added comma-list support
