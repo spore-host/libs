@@ -27,6 +27,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the only honest way to maintain a table that exists precisely because that API
   can be unavailable.
 
+- **The changelog policy is now enforced in CI rather than by habit.** A PR that changes
+  non-test Go source without touching `CHANGELOG.md` fails, and `changelog_test.go`
+  checks `[Unreleased]` for duplicate group headings, unknown group names, entries
+  outside a group, and releases missing a compare link.
+  This policy has been suite-wide for a while but only `spawn` enforced it — where it
+  immediately earned its keep, catching a duplicate `### Fixed` **four times in one
+  session** and a PR that had merged with no entry at all (found only at the next
+  release, against an empty `[Unreleased]`, with the entries reconstructed from the diff
+  at tag time).
+  `scripts/changelog-consolidate.py` (and `make changelog-fix` where there's a Makefile)
+  merges duplicate groups mechanically, because two PRs each adding their own
+  `### Fixed` is a routine conflict that merges cleanly for git and badly for the format
+  — not a mistake worth hand-fixing each time.
+
 ### Changed
 
 - **The table's doc comment no longer forbids what the table does.** It used to say
@@ -41,22 +55,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   policy: EC2 On-Demand scales linearly with size inside a family, so a mistyped
   digit breaks linearity and fails the build. That catches the error class that
   actually matters for a spend cap — a price that is *wrong* rather than merely old.
-
-### Added
-
-- **The changelog policy is now enforced in CI rather than by habit.** A PR that changes
-  non-test Go source without touching `CHANGELOG.md` fails, and `changelog_test.go`
-  checks `[Unreleased]` for duplicate group headings, unknown group names, entries
-  outside a group, and releases missing a compare link.
-  This policy has been suite-wide for a while but only `spawn` enforced it — where it
-  immediately earned its keep, catching a duplicate `### Fixed` **four times in one
-  session** and a PR that had merged with no entry at all (found only at the next
-  release, against an empty `[Unreleased]`, with the entries reconstructed from the diff
-  at tag time).
-  `scripts/changelog-consolidate.py` (and `make changelog-fix` where there's a Makefile)
-  merges duplicate groups mechanically, because two PRs each adding their own
-  `### Fixed` is a routine conflict that merges cleanly for git and badly for the format
-  — not a mistake worth hand-fixing each time.
 
 ## [0.50.0] - 2026-09-30
 
