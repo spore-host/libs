@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **405 real Graviton On-Demand rates across all 8 regions the table covers**
+  (truffle#175). Until now `EC2Pricing` had **no** Graviton compute,
+  general-purpose or memory family in *any* region — no `c6g`–`c9g`, no
+  `m6g`–`m8g`, no `r6g`–`r9g` — so when the Price List API throttled, truffle's
+  fail-closed rule refused any Graviton launch carrying a `--cost-limit`. Reported
+  from a real eight-way fan-out across four Graviton generations; `c7g.2xlarge` in
+  us-west-2 with `--cost-limit 0.15` was the launch that died.
+  Rates fetched from the Price List API, not typed from a datasheet, and validated
+  three ways before committing: the fetch pipeline reproduces four *pre-existing*
+  table entries exactly, all 405 new rates scale linearly within their family, and
+  a new test enforces that linearity permanently.
+  `PricesAsOf` records when they were fetched, as a constant rather than a comment
+  so a caller or a test can reason about the table's age.
+- **`scripts/refresh-prices.sh`** re-derives the table from the Price List API —
+  the only honest way to maintain a table that exists precisely because that API
+  can be unavailable.
+
 - **The changelog policy is now enforced in CI rather than by habit.** A PR that changes
   non-test Go source without touching `CHANGELOG.md` fails, and `changelog_test.go`
   checks `[Unreleased]` for duplicate group headings, unknown group names, entries
@@ -23,6 +40,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   merges duplicate groups mechanically, because two PRs each adding their own
   `### Fixed` is a routine conflict that merges cleanly for git and badly for the format
   — not a mistake worth hand-fixing each time.
+
+### Changed
+
+- **The table's doc comment no longer forbids what the table does.** It used to say
+  this "must not be grown into" a pricing database because hand-maintained prices
+  go stale invisibly. That argument lost, and the comment now records why: truffle
+  is the suite's pricing authority, so a fallback that cannot price the
+  architecture most of its users run is a defect in truffle rather than a caveat to
+  document around. Checked against the live API, four of the pre-existing 2026-01
+  entries were still exact nine months later — On-Demand rates move far less than
+  the staleness objection assumed.
+  The guard that replaces the prohibition is a consistency test rather than a
+  policy: EC2 On-Demand scales linearly with size inside a family, so a mistyped
+  digit breaks linearity and fails the build. That catches the error class that
+  actually matters for a spend cap — a price that is *wrong* rather than merely old.
 
 ## [0.50.0] - 2026-09-30
 
