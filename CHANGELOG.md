@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **CI now builds and scans with Go 1.26.9** (was 1.26.8) for the Go
+  vulnerabilities disclosed 2026-10-09: GO-2026-6605, 6607, 6608, 6610, 6611,
+  6612, 6613 and 6617, across `net/http`, `crypto/tls`, `mime/multipart` and
+  `net/textproto`. govulncheck reported this module as affected by 8 of them
+  through reachable standard-library calls.
+  No dependency change was needed — unlike the other repos in this sweep, `libs`
+  does not require `golang.org/x/net` at all (confirmed with `go list -m all`),
+  so the toolchain pin was the entire fix.
+
 ## [0.51.0] - 2026-10-07
 
 ### Added
