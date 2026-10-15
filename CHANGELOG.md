@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.51.1] - 2026-10-15
+
 ### Changed
 
 - **The `spawn list` TTL column header now says it is time remaining**
@@ -440,7 +442,8 @@ of this and earlier tags (`update`, `i18n`, `catalog`, `pricing` packages).
 
 ---
 
-[Unreleased]: https://github.com/spore-host/libs/compare/v0.51.0...HEAD
+[Unreleased]: https://github.com/spore-host/libs/compare/v0.51.1...HEAD
+[0.51.1]: https://github.com/spore-host/libs/compare/v0.51.0...v0.51.1
 [0.51.0]: https://github.com/spore-host/libs/compare/v0.50.0...v0.51.0
 [0.50.0]: https://github.com/spore-host/libs/compare/v0.49.0...v0.50.0
 [0.49.0]: https://github.com/spore-host/libs/compare/v0.48.0...v0.49.0
