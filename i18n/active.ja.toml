@@ -1425,7 +1425,7 @@ other = "パブリックIP"
 other = "経過時間"
 
 [spawn.list.header.ttl]
-other = "TTL"
+other = "残りTTL"
 
 [spawn.list.header.iam_role]
 description = "IAM role column header"

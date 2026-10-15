@@ -1819,8 +1819,8 @@ description = "Age column header"
 other = "Age"
 
 [spawn.list.header.ttl]
-description = "TTL column header"
-other = "TTL"
+description = "TTL column header: time remaining before the instance's termination deadline"
+other = "TTL Left"
 
 [spawn.list.header.iam_role]
 description = "IAM role column header"

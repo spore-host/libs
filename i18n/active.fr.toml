@@ -710,7 +710,7 @@ other = "IP publique"
 other = "Âge"
 
 [spawn.list.header.ttl]
-other = "TTL"
+other = "TTL restant"
 
 [spawn.list.header.iam_role]
 description = "IAM role column header"
