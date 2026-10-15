@@ -710,7 +710,7 @@ other = "Öffentliche IP"
 other = "Alter"
 
 [spawn.list.header.ttl]
-other = "TTL"
+other = "Rest-TTL"
 
 [spawn.list.header.iam_role]
 description = "IAM role column header"

@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The `spawn list` TTL column header now says it is time remaining**
+  (#54). spawn now shows the time left before an instance's termination
+  deadline in that column (`53m`, `none`, `expired`; spore-host/spawn#900)
+  rather than the configured TTL, so a bare `TTL` header read as the
+  configured value. `spawn.list.header.ttl` is now `TTL Left` (en),
+  `Rest-TTL` (de), `TTL restante` (es), `TTL restant` (fr), `TTL Restante`
+  (pt) and `残りTTL` (ja). Only the translated text changed; the message ID is
+  the same, so callers need no code change. Anything matching the literal
+  header text `TTL` in `spawn list` output must allow the new wording.
+
 ### Security
 
 - **CI now builds and scans with Go 1.26.9** (was 1.26.8) for the Go
