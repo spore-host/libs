@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`golang.org/x/text` v0.39.0 → v0.41.0** for CVE-2026-56851 (denial of
   service via an out-of-bounds slice in the Nickname profile). Trivy flagged it
   on main with no code change.
+
 ### Fixed
 
 - **`truffle --help` and spawn's help examples use `truffle find`, not the
