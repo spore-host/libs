@@ -13,6 +13,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`golang.org/x/text` v0.39.0 → v0.41.0** for CVE-2026-56851 (denial of
   service via an out-of-bounds slice in the Nickname profile). Trivy flagged it
   on main with no code change.
+### Fixed
+
+- **`truffle --help` and spawn's help examples use `truffle find`, not the
+  deprecated `truffle search`** (spore-host/truffle#255).
+  `truffle.root.long` (the root `truffle --help` examples), `spawn.root.long`
+  and `spawn.launch.long` (the "from truffle" pipes) invoked
+  `truffle search m7i.large`, `"m8g.*"` and `--regions`. They now use
+  `truffle find` in en, es, ja and pt. de and fr carry no examples in these
+  keys. `truffle.search.long`, the deprecated command's own help, is
+  unchanged. Only translated text changed and the message IDs are the same,
+  so callers need no code change. A new test fails if any catalog entry
+  outside `truffle.search.*` runs `truffle search`.
 
 ## [0.51.1] - 2026-10-15
 

@@ -62,7 +62,7 @@ Perfect for:
 
 Examples:
   # From truffle
-  truffle search m7i.large | spawn
+  truffle find m7i.large | spawn
 
   # Spot instance
   truffle spot m7i.large --max-price 0.10 | spawn --spot
@@ -103,7 +103,7 @@ Examples:
   spawn launch
 
   # From truffle
-  truffle search m7i.large | spawn launch
+  truffle find m7i.large | spawn launch
 
   # Direct
   spawn launch --instance-type m7i.large --region us-east-1"""
@@ -880,13 +880,13 @@ support specific EC2 instance types. Perfect for planning multi-region deploymen
 
 Examples:
   # Find all regions with m7i.large instances
-  truffle search m7i.large
+  truffle find m7i.large
 
   # Search with wildcards - Graviton4 instances
-  truffle search "m8g.*"
+  truffle find "m8g.*"
 
   # Filter by specific regions
-  truffle search m7i.large --regions us-east-1,eu-west-1"""
+  truffle find m7i.large --regions us-east-1,eu-west-1"""
 
 # =============================================================================
 # TRUFFLE - SEARCH COMMAND

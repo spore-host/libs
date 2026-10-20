@@ -51,7 +51,7 @@ spawnを使うとAWSインスタンスの起動が非常に簡単になります
 
 使用例：
   # truffleから
-  truffle search m7i.large | spawn
+  truffle find m7i.large | spawn
 
   # スポットインスタンス
   truffle spot m7i.large --max-price 0.10 | spawn --spot
@@ -89,7 +89,7 @@ other = """スマートデフォルトでEC2インスタンスを起動します
   spawn launch
 
   # truffleから
-  truffle search m7i.large | spawn launch
+  truffle find m7i.large | spawn launch
 
   # 直接指定
   spawn launch --instance-type m7i.large --region us-east-1"""
@@ -697,13 +697,13 @@ other = """Truffleは、特定のEC2インスタンスタイプをサポート�
 
 使用例：
   # m7i.largeインスタンスを持つすべてのリージョンを検索
-  truffle search m7i.large
+  truffle find m7i.large
 
   # ワイルドカードで検索 - Graviton4インスタンス
-  truffle search "m8g.*"
+  truffle find "m8g.*"
 
   # 特定のリージョンでフィルター
-  truffle search m7i.large --regions us-east-1,eu-west-1"""
+  truffle find m7i.large --regions us-east-1,eu-west-1"""
 
 # =============================================================================
 # TRUFFLE - SEARCHコマンド
