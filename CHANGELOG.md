@@ -8,11 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.51.2] - 2026-10-20
+
 ### Security
 
 - **`golang.org/x/text` v0.39.0 → v0.41.0** for CVE-2026-56851 (denial of
   service via an out-of-bounds slice in the Nickname profile). Trivy flagged it
   on main with no code change.
+
 ### Fixed
 
 - **`truffle --help` and spawn's help examples use `truffle find`, not the
@@ -460,7 +463,8 @@ of this and earlier tags (`update`, `i18n`, `catalog`, `pricing` packages).
 
 ---
 
-[Unreleased]: https://github.com/spore-host/libs/compare/v0.51.1...HEAD
+[Unreleased]: https://github.com/spore-host/libs/compare/v0.51.2...HEAD
+[0.51.2]: https://github.com/spore-host/libs/compare/v0.51.1...v0.51.2
 [0.51.1]: https://github.com/spore-host/libs/compare/v0.51.0...v0.51.1
 [0.51.0]: https://github.com/spore-host/libs/compare/v0.50.0...v0.51.0
 [0.50.0]: https://github.com/spore-host/libs/compare/v0.49.0...v0.50.0
