@@ -51,7 +51,7 @@ Perfecto para:
 
 Ejemplos:
   # Desde truffle
-  truffle search m7i.large | spawn
+  truffle find m7i.large | spawn
 
   # Instancia Spot
   truffle spot m7i.large --max-price 0.10 | spawn --spot
@@ -89,7 +89,7 @@ Ejemplos:
   spawn launch
 
   # Desde truffle
-  truffle search m7i.large | spawn launch
+  truffle find m7i.large | spawn launch
 
   # Directo
   spawn launch --instance-type m7i.large --region us-east-1"""
@@ -1042,13 +1042,13 @@ soportan tipos específicos de instancias EC2. ¡Perfecto para planificar implem
 
 Ejemplos:
   # Encontrar todas las regiones con instancias m7i.large
-  truffle search m7i.large
+  truffle find m7i.large
 
   # Buscar con comodines - instancias Graviton4
-  truffle search "m8g.*"
+  truffle find "m8g.*"
 
   # Filtrar por regiones específicas
-  truffle search m7i.large --regions us-east-1,eu-west-1"""
+  truffle find m7i.large --regions us-east-1,eu-west-1"""
 
 # =============================================================================
 # TRUFFLE - SEARCH
