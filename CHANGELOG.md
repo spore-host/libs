@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **`golang.org/x/text` v0.39.0 → v0.41.0** for CVE-2026-56851 (denial of
+  service via an out-of-bounds slice in the Nickname profile). Trivy flagged it
+  on main with no code change.
+
 ## [0.51.1] - 2026-10-15
 
 ### Changed
