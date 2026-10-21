@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Built with Go 1.26.10** for GO-2026-6809 (disclosed 2026-10-21), which
+  makes `crypto/x509` distrust compromised intermediate certificates. The CI
+  Go pin moves 1.26.9 → 1.26.10.
+
 ## [0.51.2] - 2026-10-20
 
 ### Security
