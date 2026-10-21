@@ -30,10 +30,10 @@ other = "Éxito"
 other = "spawn"
 
 [spawn.root.short]
-other = "Lanza instancias AWS EC2 sin esfuerzo"
+other = "Cómputo efímero para AWS"
 
 [spawn.root.long]
-other = """spawn - Lanzador de instancias efímeras AWS EC2 (compañero de truffle)
+other = """spawn - cómputo efímero para AWS (compañero de truffle)
 
 spawn facilita el lanzamiento de instancias AWS:
   • Detecta automáticamente AMI (Amazon Linux 2023, incluyendo variantes GPU)
