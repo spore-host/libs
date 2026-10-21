@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.51.3] - 2026-10-21
+
 ### Changed
 - **spawn's help text describes it as ephemeral compute for AWS** in all six
   languages. `spawn.root.short` was "Launch AWS EC2 instances effortlessly" and
@@ -475,7 +477,8 @@ of this and earlier tags (`update`, `i18n`, `catalog`, `pricing` packages).
 
 ---
 
-[Unreleased]: https://github.com/spore-host/libs/compare/v0.51.2...HEAD
+[Unreleased]: https://github.com/spore-host/libs/compare/v0.51.3...HEAD
+[0.51.3]: https://github.com/spore-host/libs/compare/v0.51.2...v0.51.3
 [0.51.2]: https://github.com/spore-host/libs/compare/v0.51.1...v0.51.2
 [0.51.1]: https://github.com/spore-host/libs/compare/v0.51.0...v0.51.1
 [0.51.0]: https://github.com/spore-host/libs/compare/v0.50.0...v0.51.0
