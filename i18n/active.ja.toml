@@ -30,10 +30,10 @@ other = "成功"
 other = "spawn"
 
 [spawn.root.short]
-other = "AWS EC2インスタンスを簡単に起動"
+other = "AWS向けエフェメラルコンピューティング"
 
 [spawn.root.long]
-other = """spawn - エフェメラルAWS EC2インスタンスランチャー（truffleの補完ツール）
+other = """spawn - AWS向けエフェメラルコンピューティング（truffleの補完ツール）
 
 spawnを使うとAWSインスタンスの起動が非常に簡単になります：
   • AMIを自動検出（Amazon Linux 2023、GPUバリアント含む）

@@ -40,11 +40,11 @@ other = "spawn"
 
 [spawn.root.short]
 description = "Short description of spawn CLI"
-other = "Launch AWS EC2 instances effortlessly"
+other = "Ephemeral compute for AWS"
 
 [spawn.root.long]
 description = "Long description of spawn CLI with examples"
-other = """spawn - Ephemeral AWS EC2 instance launcher (companion to truffle)
+other = """spawn - ephemeral compute for AWS (companion to truffle)
 
 spawn makes it super easy to launch AWS instances:
   • Auto-detects AMI (Amazon Linux 2023, including GPU variants)

@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **spawn's help text describes it as ephemeral compute for AWS** in all six
+  languages. `spawn.root.short` was "Launch AWS EC2 instances effortlessly" and
+  the first line of `spawn.root.long` "Ephemeral AWS EC2 instance launcher";
+  both now say "ephemeral compute for AWS", matching `spawn version` and the
+  project's description.
+
 ### Security
 - **Built with Go 1.26.10** for GO-2026-6809 (disclosed 2026-10-21), which
   makes `crypto/x509` distrust compromised intermediate certificates. The CI

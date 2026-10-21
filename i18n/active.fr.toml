@@ -26,10 +26,10 @@ other = "Succès"
 other = "spawn"
 
 [spawn.root.short]
-other = "Lancez des instances AWS EC2 sans effort"
+other = "Calcul éphémère pour AWS"
 
 [spawn.root.long]
-other = """spawn - Lanceur d'instances éphémères AWS EC2
+other = """spawn - calcul éphémère pour AWS
 
 Facilite le lancement d'instances AWS avec détection automatique d'AMI, configuration SSH automatique et arrêt automatique."""
 
