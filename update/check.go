@@ -45,9 +45,22 @@ func (r *Result) Message() string {
 }
 
 // CheckAsync starts a background version check and returns a channel that
-// yields the result. If the check is not due (cached within 24h), the env var
-// SPORE_NO_UPDATE_CHECK is set, or the tool is not a TTY, the channel returns
-// nil immediately.
+// yields the result. The consumer prints the notice to stderr, so the check is
+// skipped entirely, and the channel yields nil immediately, when:
+//
+//   - SPORE_NO_UPDATE_CHECK is set (to any value),
+//   - CI is set (to any value), or
+//   - stderr is not a terminal (redirected to a file or pipe, as in a batch
+//     harness or a script that captures output).
+//
+// Skipped means no network request and no cache read or write: the notice could
+// not be shown to a person, so there is nothing to fetch it for. Otherwise the
+// result comes from the 24h cache when it is fresh, or from the GitHub releases
+// API.
+//
+// The terminal test is a character-device check on stderr, so a stderr sent to
+// /dev/null (also a character device) still counts as a terminal; the notice then
+// goes nowhere, which is harmless.
 func CheckAsync(tool, currentVersion string) <-chan *Result {
 	ch := make(chan *Result, 1)
 
@@ -57,6 +70,11 @@ func CheckAsync(tool, currentVersion string) <-chan *Result {
 	}
 
 	if os.Getenv("CI") != "" {
+		ch <- nil
+		return ch
+	}
+
+	if !stderrIsTerminal() {
 		ch <- nil
 		return ch
 	}
@@ -84,8 +102,8 @@ func CheckAsync(tool, currentVersion string) <-chan *Result {
 }
 
 // CheckNow performs a synchronous version check and returns the result. Unlike
-// CheckAsync it is NOT gated by the CI / SPORE_NO_UPDATE_CHECK / non-TTY
-// suppressions and it bypasses the 24h cache — it is meant for an explicit,
+// CheckAsync it is NOT gated by SPORE_NO_UPDATE_CHECK, CI or whether stderr is a
+// terminal, and it bypasses the 24h cache — it is meant for an explicit,
 // user-initiated check such as the `version` subcommand, where the user is
 // asking "am I current?" and expects a fresh answer. Returns nil if the GitHub
 // releases API can't be reached (the caller renders "couldn't check"). The
@@ -103,6 +121,22 @@ func CheckNow(tool, currentVersion string) *Result {
 	}
 	writeCache(filepath.Join(cacheDirectory(), tool+"-update-check"), result)
 	return result
+}
+
+// stderrIsTerminal reports whether the process's stderr is a terminal. It is a
+// package var so tests can choose the answer instead of depending on how the
+// test binary's stderr happens to be connected.
+var stderrIsTerminal = func() bool { return isTerminal(os.Stderr) }
+
+// isTerminal reports whether f is a character device: a TTY on Unix, a console
+// on Windows. A regular file or a pipe is not. This avoids a golang.org/x/term
+// dependency for the one bit the notice needs.
+func isTerminal(f *os.File) bool {
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
 }
 
 func check(tool, currentVersion string) *Result {

@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -132,22 +134,119 @@ func TestCacheExpiry(t *testing.T) {
 	}
 }
 
-func TestCheckAsync_DisabledByEnv(t *testing.T) {
-	t.Setenv("SPORE_NO_UPDATE_CHECK", "1")
-	ch := CheckAsync("truffle", "0.37.0")
-	result := <-ch
-	if result != nil {
-		t.Error("expected nil when SPORE_NO_UPDATE_CHECK is set")
+// releasesServer stands in for the GitHub releases API and counts the requests
+// it receives, so a test can assert whether CheckAsync made the network call.
+func releasesServer(t *testing.T, tag string) *atomic.Int32 {
+	t.Helper()
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte(`{"tag_name":"` + tag + `","html_url":"https://github.com/spore-host/truffle/releases/tag/` + tag + `"}`))
+	}))
+	t.Cleanup(srv.Close)
+	old := githubAPIBase
+	githubAPIBase = srv.URL
+	t.Cleanup(func() { githubAPIBase = old })
+	return &hits
+}
+
+// isolateCheck gives CheckAsync an empty cache, clears both env suppressors and
+// fixes the answer of the stderr-terminal seam. It returns the cache file path.
+func isolateCheck(t *testing.T, terminal bool) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
+	t.Setenv("SPORE_NO_UPDATE_CHECK", "")
+	t.Setenv("CI", "")
+	old := stderrIsTerminal
+	stderrIsTerminal = func() bool { return terminal }
+	t.Cleanup(func() { stderrIsTerminal = old })
+	return filepath.Join(home, ".spore", "cache", "truffle-update-check")
+}
+
+// A batch harness captures stderr, so the notice would land in its logs on every
+// invocation (libs#69). With stderr not a terminal there must be no notice, no
+// network request and no cache write.
+func TestCheckAsync_NonTerminalStderr_NoCheck(t *testing.T) {
+	cacheFile := isolateCheck(t, false)
+	hits := releasesServer(t, "v9.9.9")
+
+	if result := <-CheckAsync("truffle", "0.37.0"); result != nil {
+		t.Errorf("CheckAsync yielded %+v with stderr not a terminal, want nil", result)
+	}
+	if n := hits.Load(); n != 0 {
+		t.Errorf("CheckAsync made %d release request(s) with stderr not a terminal, want 0", n)
+	}
+	if _, err := os.Stat(cacheFile); !os.IsNotExist(err) {
+		t.Errorf("CheckAsync touched the cache with stderr not a terminal (stat err %v)", err)
 	}
 }
 
-func TestCheckAsync_DisabledInCI(t *testing.T) {
-	t.Setenv("CI", "true")
-	t.Setenv("SPORE_NO_UPDATE_CHECK", "")
-	ch := CheckAsync("truffle", "0.37.0")
-	result := <-ch
-	if result != nil {
-		t.Error("expected nil when CI is set")
+// The other half: with stderr a terminal and no suppressor set, the check runs
+// and yields a result whose notice names the newer version.
+func TestCheckAsync_TerminalStderr_YieldsNotice(t *testing.T) {
+	cacheFile := isolateCheck(t, true)
+	hits := releasesServer(t, "v9.9.9")
+
+	result := <-CheckAsync("truffle", "0.37.0")
+	if !result.HasUpdate() {
+		t.Fatalf("CheckAsync yielded %+v with stderr a terminal, want an available update", result)
+	}
+	if msg := result.Message(); !strings.Contains(msg, "9.9.9") || !strings.Contains(msg, "truffle") {
+		t.Errorf("notice %q does not name truffle 9.9.9", msg)
+	}
+	if n := hits.Load(); n != 1 {
+		t.Errorf("CheckAsync made %d release request(s), want 1", n)
+	}
+	if _, err := os.Stat(cacheFile); err != nil {
+		t.Errorf("CheckAsync did not write the cache: %v", err)
+	}
+}
+
+// Both env suppressors still work on a terminal, where nothing else would
+// suppress the check, and they skip the request, not just the result.
+func TestCheckAsync_EnvSuppressors(t *testing.T) {
+	for _, tc := range []struct{ name, key, val string }{
+		{"SPORE_NO_UPDATE_CHECK", "SPORE_NO_UPDATE_CHECK", "1"},
+		{"SPORE_NO_UPDATE_CHECK any value", "SPORE_NO_UPDATE_CHECK", "no"},
+		{"CI", "CI", "true"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateCheck(t, true)
+			hits := releasesServer(t, "v9.9.9")
+			t.Setenv(tc.key, tc.val)
+
+			if result := <-CheckAsync("truffle", "0.37.0"); result != nil {
+				t.Errorf("CheckAsync yielded %+v with %s=%q, want nil", result, tc.key, tc.val)
+			}
+			if n := hits.Load(); n != 0 {
+				t.Errorf("CheckAsync made %d release request(s) with %s=%q, want 0", n, tc.key, tc.val)
+			}
+		})
+	}
+}
+
+// isTerminal is the real seam behind stderrIsTerminal: a regular file and a pipe,
+// the two things a harness redirects stderr to, are not terminals.
+func TestIsTerminal_FileAndPipe(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	if isTerminal(f) {
+		t.Error("isTerminal(regular file) = true, want false")
+	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+	defer func() { _ = w.Close() }()
+	if isTerminal(w) {
+		t.Error("isTerminal(pipe) = true, want false")
 	}
 }
 

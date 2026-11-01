@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **The "A newer version … is available" notice no longer appears when stderr
+  is not a terminal** (libs#69). `update.CheckAsync` documented a non-TTY
+  suppression but never checked for one, so a batch harness or a script that
+  captured stderr got the notice on every invocation. When stderr is redirected
+  to a file or pipe, `CheckAsync` now yields nil at once and makes no request to
+  the GitHub releases API and no cache read or write. `SPORE_NO_UPDATE_CHECK`
+  (any value) and `CI` still suppress it the same way. `CheckNow`, used by
+  explicit `version`/`status` checks, is unchanged: it ignores all three. Users
+  get this when spawn and truffle bump their libs requirement.
+
 ## [0.51.3] - 2026-10-21
 
 ### Changed
