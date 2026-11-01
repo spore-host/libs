@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.51.4] - 2026-11-01
+
 ### Fixed
 - **The "A newer version … is available" notice no longer appears when stderr
   is not a terminal** (libs#69). `update.CheckAsync` documented a non-TTY
@@ -488,7 +490,8 @@ of this and earlier tags (`update`, `i18n`, `catalog`, `pricing` packages).
 
 ---
 
-[Unreleased]: https://github.com/spore-host/libs/compare/v0.51.3...HEAD
+[Unreleased]: https://github.com/spore-host/libs/compare/v0.51.4...HEAD
+[0.51.4]: https://github.com/spore-host/libs/compare/v0.51.3...v0.51.4
 [0.51.3]: https://github.com/spore-host/libs/compare/v0.51.2...v0.51.3
 [0.51.2]: https://github.com/spore-host/libs/compare/v0.51.1...v0.51.2
 [0.51.1]: https://github.com/spore-host/libs/compare/v0.51.0...v0.51.1
