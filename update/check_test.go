@@ -310,3 +310,26 @@ func TestCheckNow_NilOnFetchError(t *testing.T) {
 		t.Errorf("CheckNow should return nil on a 500, got %+v", res)
 	}
 }
+
+// The default seam reads os.Stderr when called, not when the package loads, so
+// a stderr redirected to a pipe is seen as not a terminal. A file whose Stat
+// fails (closed) is not a terminal either: the notice is only shown on a
+// positive answer.
+func TestStderrIsTerminal_DefaultSeam(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+	old := os.Stderr
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = old })
+	if stderrIsTerminal() {
+		t.Error("stderrIsTerminal() = true with os.Stderr a pipe, want false")
+	}
+
+	_ = w.Close()
+	if isTerminal(w) {
+		t.Error("isTerminal(closed file) = true, want false")
+	}
+}
