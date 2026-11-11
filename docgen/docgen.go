@@ -224,22 +224,42 @@ func escapeAnglesInline(s string) string {
 
 // escapeAnglesBlock applies escapeAnglesInline line-by-line across a multi-line
 // block, skipping fenced code blocks (``` … ```) and indented (4-space/tab) code
-// lines entirely — angles there are literal code, not markup.
+// blocks entirely — angles there are literal code, not markup.
+//
+// An indented line is a code block only when it starts after a blank line (or
+// continues an indented code block). An indented line that directly follows
+// paragraph text is a lazy continuation of that paragraph (CommonMark: an
+// indented code block cannot interrupt a paragraph), so markdown-it renders it
+// as prose and Vue compiles any bare <placeholder> in it as an HTML tag. That is
+// how a wrapped help-text line like `             <group>" shows the whole
+// group.` broke the docs build.
 func escapeAnglesBlock(s string) string {
 	lines := strings.Split(s, "\n")
 	inFence := false
+	inIndentCode := false
+	prevBlank := true // the block starts a new paragraph
 	for i, ln := range lines {
+		blank := strings.TrimSpace(ln) == ""
 		if strings.HasPrefix(strings.TrimSpace(ln), "```") {
 			inFence = !inFence
+			inIndentCode = false
+			prevBlank = false
 			continue
 		}
 		if inFence {
 			continue
 		}
-		if strings.HasPrefix(ln, "    ") || strings.HasPrefix(ln, "\t") {
-			continue
+		indented := strings.HasPrefix(ln, "    ") || strings.HasPrefix(ln, "\t")
+		switch {
+		case blank:
+			// A blank line neither ends nor starts an indented code block.
+		case indented && (prevBlank || inIndentCode):
+			inIndentCode = true
+		default:
+			inIndentCode = false
+			lines[i] = escapeAnglesInline(ln)
 		}
-		lines[i] = escapeAnglesInline(ln)
+		prevBlank = blank
 	}
 	return strings.Join(lines, "\n")
 }
