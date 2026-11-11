@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.51.5] - 2026-11-11
+
 ### Fixed
 
 - **docgen: a wrapped, indented help-text line is escaped as prose** (`escapeAnglesBlock`). A 4-space-indented line was always treated as an indented code block and left raw, but one that directly follows paragraph text is a lazy continuation of that paragraph (CommonMark: an indented code block cannot interrupt a paragraph). markdown-it renders it as prose, so a bare `<placeholder>` in it reached Vue as an unclosed HTML tag. lagotto's `list` help (`"lagotto status\n             <group>"`) broke the spore.host docs build this way and blocked the CLI-reference sync (spore-host#647). spawn's `notify` examples (`--workspace-id <TEAMS_TENANT_ID>`) were rendered as HTML the same way and lost their placeholders. An indented line now starts a code block only after a blank line or inside one.
@@ -498,7 +500,8 @@ of this and earlier tags (`update`, `i18n`, `catalog`, `pricing` packages).
 
 ---
 
-[Unreleased]: https://github.com/spore-host/libs/compare/v0.51.4...HEAD
+[Unreleased]: https://github.com/spore-host/libs/compare/v0.51.5...HEAD
+[0.51.5]: https://github.com/spore-host/libs/compare/v0.51.4...v0.51.5
 [0.51.4]: https://github.com/spore-host/libs/compare/v0.51.3...v0.51.4
 [0.51.3]: https://github.com/spore-host/libs/compare/v0.51.2...v0.51.3
 [0.51.2]: https://github.com/spore-host/libs/compare/v0.51.1...v0.51.2
