@@ -138,3 +138,31 @@ func TestGenerate_Deterministic(t *testing.T) {
 		}
 	}
 }
+
+func TestEscapeAnglesBlock_IndentedContinuationIsProse(t *testing.T) {
+	// A wrapped help-text column: the indented line continues the paragraph,
+	// so it is prose and its <group> must be escaped (lagotto list, 2026-11-11).
+	in := "  GROUP      the watch group: \"lagotto status\n             <group>\" shows the whole group."
+	got := escapeAnglesBlock(in)
+	if strings.Contains(got, "<group>") || !strings.Contains(got, "&lt;group&gt;") {
+		t.Errorf("indented paragraph continuation not escaped:\n%s", got)
+	}
+	// After a blank line an indented line is a code block and stays literal,
+	// including the indented lines that follow it.
+	in = "Examples:\n\n    demo launch <name>\n    demo stop <name>\nback to <prose>"
+	got = escapeAnglesBlock(in)
+	for _, lit := range []string{"    demo launch <name>", "    demo stop <name>"} {
+		if !strings.Contains(got, lit) {
+			t.Errorf("indented code block escaped (%q):\n%s", lit, got)
+		}
+	}
+	if !strings.Contains(got, "back to &lt;prose&gt;") {
+		t.Errorf("prose after an indented code block not escaped:\n%s", got)
+	}
+	// A code block survives a blank line inside it.
+	in = "x\n\n    a <b>\n\n    c <d>"
+	got = escapeAnglesBlock(in)
+	if !strings.Contains(got, "    c <d>") {
+		t.Errorf("indented code block across a blank line escaped:\n%s", got)
+	}
+}
