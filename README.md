@@ -24,6 +24,12 @@ The `spore-host:*` resource tags (`managed-by`, `scope`, `created`, ...) that ev
 ### `github.com/spore-host/libs/tags/tagtest`
 An AWS SDK v2 middleware for unit tests that fails the test when a create call lacks the `spore-host:managed-by` tag.
 
+### `github.com/spore-host/libs/lifecycle`
+The shared-account lease (`spore-host-lifecycle` DynamoDB table) that lets a tool tear down what it created without racing another user's setup. Creators call `MarkActive`; backstops call `Observe`, `Claim`, `Lease.Step`/`Finish`/`Release`, and `CloseTableIfEmpty`. `lifecycle/lifecycletest` is an in-memory DynamoDB for testing against it.
+
+### `github.com/spore-host/libs/footprint`
+The JSON schema of `<tool> footprint -o json`, the delete guard (`Deletable`), and the dependency-ordered teardown executor (`NewPlan`, `Execute` in `report` or `reap` mode).
+
 ## Usage
 
 ```go

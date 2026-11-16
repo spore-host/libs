@@ -88,6 +88,17 @@ func TestIsService(t *testing.T) {
 	}
 }
 
+func TestIsPermanent(t *testing.T) {
+	for _, m := range []map[string]string{nil, {}, {Permanent: "false"}, {Permanent: "TRUE"}, {Permanent: ""}} {
+		if IsPermanent(m) {
+			t.Errorf("IsPermanent(%v) = true", m)
+		}
+	}
+	if !IsPermanent(map[string]string{Permanent: PermanentTrue}) {
+		t.Error("IsPermanent false with Permanent=true")
+	}
+}
+
 // The tag keys and tool names are written to AWS and read back by cleanup in
 // other repos; changing one strands every resource tagged with the old value.
 func TestWireValuesAreStable(t *testing.T) {
@@ -98,6 +109,7 @@ func TestWireValuesAreStable(t *testing.T) {
 		Component: "spore-host:component", SchemaVersion: "1", RoleService: "service",
 		string(ToolSpawn): "spawn", string(ToolLagotto): "lagotto",
 		string(ToolCalque): "calque", string(ToolTruffle): "truffle", string(ToolMCP): "spore-host-mcp",
+		Permanent: "spore-host:permanent", PermanentTrue: "true", string(ToolShared): "spore-host",
 	} {
 		if got != want {
 			t.Errorf("wire value %q, want %q", got, want)
