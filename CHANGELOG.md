@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.53.0] - 2026-11-16
+
 ### Added
 
 - **`lifecycle`: the shared-account lease, so one user's teardown can't race another user's setup** (libs#77, part of leave-no-trace spore-host/spore-host#752). One DynamoDB table per region, `spore-host-lifecycle`, plus the same table in a control region for `global` scope. It is pay-per-request and tagged `managed-by=spore-host` and `component=lifecycle`, with no `role` tag: `role=service` is reserved for the live service, and backstop roles deny access to resources carrying it (lagotto#333). It holds one item per tool and scope: `state`, `epoch`, `idleSince`, a fenced `lease` and `holds`.
@@ -524,7 +526,8 @@ of this and earlier tags (`update`, `i18n`, `catalog`, `pricing` packages).
 
 ---
 
-[Unreleased]: https://github.com/spore-host/libs/compare/v0.52.0...HEAD
+[Unreleased]: https://github.com/spore-host/libs/compare/v0.53.0...HEAD
+[0.53.0]: https://github.com/spore-host/libs/compare/v0.52.0...v0.53.0
 [0.52.0]: https://github.com/spore-host/libs/compare/v0.51.5...v0.52.0
 [0.51.5]: https://github.com/spore-host/libs/compare/v0.51.4...v0.51.5
 [0.51.4]: https://github.com/spore-host/libs/compare/v0.51.3...v0.51.4
