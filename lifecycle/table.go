@@ -14,13 +14,21 @@ import (
 )
 
 // TableTags returns the tags the lifecycle table is created with in region:
-// the standard set with ManagedBy=ToolShared, plus Role=service and
-// Component=lifecycle. ToolShared, not any one tool, because every tool
-// writes to the table; Role=service so that no footprint teardown treats it
-// as something to delete. Only CloseTableIfEmpty removes it.
+// the standard set with ManagedBy=ToolShared, plus Component=lifecycle.
+//
+// ManagedBy is ToolShared, not any one tool, because every tool writes to
+// the table. That alone keeps it out of every tool's teardown: the delete
+// guard (footprint.Deletable) requires ManagedBy to name the tool doing the
+// teardown, which ToolShared never does. Only CloseTableIfEmpty removes it.
+//
+// The table deliberately does NOT carry Role=service. That tag is reserved
+// for the live spore.host service (spore-host#750), and backstops' roles
+// carry an explicit Deny on resources tagged with it (lagotto#333); DynamoDB
+// evaluates aws:ResourceTag, so tagging the table Role=service would deny
+// every backstop the lease table it must read and write. The table is
+// shared tool infrastructure, and it lives in users' accounts too.
 func (c *Client) TableTags(region string, now time.Time) map[string]string {
 	t := tags.For(tags.ToolShared, region, now, c.o.Owner)
-	t[tags.Role] = tags.RoleService
 	t[tags.Component] = "lifecycle"
 	return t
 }

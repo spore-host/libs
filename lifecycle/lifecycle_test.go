@@ -41,7 +41,7 @@ func TestMarkActiveCreatesTaggedTable(t *testing.T) {
 		t.Errorf("key schema %+v", in.KeySchema)
 	}
 	tg := dynamodbtags.ToMap(in.Tags)
-	if !tags.IsManagedBy(tg, tags.ToolShared) || !tags.IsService(tg) || tg[tags.Component] != "lifecycle" || tg[tags.Scope] != region {
+	if !tags.IsManagedBy(tg, tags.ToolShared) || tg[tags.Component] != "lifecycle" || tg[tags.Scope] != region {
 		t.Errorf("table tags %v", tg)
 	}
 	it := e.item(t)
@@ -56,6 +56,42 @@ func TestMarkActiveCreatesTaggedTable(t *testing.T) {
 	}
 	if n := len(e.fake().CreateTableInputs()); n != 1 {
 		t.Errorf("second MarkActive created the table again (%d creates)", n)
+	}
+}
+
+// The lifecycle table must never carry spore-host:role. role=service is
+// reserved for the live spore.host service, and backstops' roles have an
+// explicit Deny on resources tagged with it (lagotto#333), which DynamoDB
+// enforces through aws:ResourceTag: a role-tagged lease table would lock out
+// every backstop that must use it.
+func TestTableTagsHaveNoRole(t *testing.T) {
+	e := newEnv(t)
+	tg := e.c.TableTags(region, t0)
+	if v, ok := tg[tags.Role]; ok {
+		t.Errorf("TableTags carries %s=%q; the lease table must have no role tag", tags.Role, v)
+	}
+	if tags.IsService(tg) {
+		t.Error("TableTags marks the lease table as the spore.host service")
+	}
+	want := map[string]string{
+		tags.ManagedBy: string(tags.ToolShared), tags.Component: "lifecycle", tags.Scope: region,
+		tags.Created: tags.FormatCreated(t0), tags.Schema: tags.SchemaVersion, tags.Owner: "tester",
+	}
+	if len(tg) != len(want) {
+		t.Errorf("TableTags = %v, want exactly %v", tg, want)
+	}
+	for k, v := range want {
+		if tg[k] != v {
+			t.Errorf("TableTags[%s] = %q, want %q", k, tg[k], v)
+		}
+	}
+	// And what CreateTable actually sends.
+	if err := e.c.MarkActive(ctx, tool, region); err != nil {
+		t.Fatal(err)
+	}
+	sent := dynamodbtags.ToMap(e.fake().CreateTableInputs()[0].Tags)
+	if _, ok := sent[tags.Role]; ok {
+		t.Errorf("CreateTable sent a role tag: %v", sent)
 	}
 }
 
