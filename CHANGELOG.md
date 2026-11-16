@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.52.0] - 2026-11-16
+
 ### Added
 
 - **`tags`: the `spore-host:*` resource tags, shared by every tool** (libs#76, part of leave-no-trace spore-host/spore-host#752). Constants for the keys (`ManagedBy`, `Scope`, `Created`, `Schema`, `Owner`, `Role`, `Component`), the values `SchemaVersion` (`"1"`) and `RoleService`, and the tool names `ToolSpawn`, `ToolLagotto`, `ToolCalque`, `ToolTruffle` and `ToolMCP`. `For(tool, scope, now, owner)` returns the standard set, which SQS, Lambda and CloudWatch Logs take as-is. `IsManagedBy`, `IsService` and `CreatedAt` read tags back for cleanup. The package has no dependencies.
@@ -507,7 +509,8 @@ of this and earlier tags (`update`, `i18n`, `catalog`, `pricing` packages).
 
 ---
 
-[Unreleased]: https://github.com/spore-host/libs/compare/v0.51.5...HEAD
+[Unreleased]: https://github.com/spore-host/libs/compare/v0.52.0...HEAD
+[0.52.0]: https://github.com/spore-host/libs/compare/v0.51.5...v0.52.0
 [0.51.5]: https://github.com/spore-host/libs/compare/v0.51.4...v0.51.5
 [0.51.4]: https://github.com/spore-host/libs/compare/v0.51.3...v0.51.4
 [0.51.3]: https://github.com/spore-host/libs/compare/v0.51.2...v0.51.3
