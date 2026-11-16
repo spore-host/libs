@@ -18,6 +18,12 @@ Internationalization support for CLI output. Supports English, Spanish, French, 
 ### `github.com/spore-host/libs/pricing`
 EC2 on-demand pricing data and cost estimation utilities.
 
+### `github.com/spore-host/libs/tags`
+The `spore-host:*` resource tags (`managed-by`, `scope`, `created`, ...) that every tool puts on what it creates, so leave-no-trace cleanup can find it. Dependency-free; per-service converters in `tags/ec2tags`, `tags/iamtags`, `tags/dynamodbtags`, `tags/snstags`, `tags/s3tags`, `tags/schedulertags`.
+
+### `github.com/spore-host/libs/tags/tagtest`
+An AWS SDK v2 middleware for unit tests that fails the test when a create call lacks the `spore-host:managed-by` tag.
+
 ## Usage
 
 ```go
