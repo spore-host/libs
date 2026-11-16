@@ -97,7 +97,7 @@ func TestWireValuesAreStable(t *testing.T) {
 		Owner: "spore-host:owner", Role: "spore-host:role",
 		Component: "spore-host:component", SchemaVersion: "1", RoleService: "service",
 		string(ToolSpawn): "spawn", string(ToolLagotto): "lagotto",
-		string(ToolCalque): "calque", string(ToolTruffle): "truffle", string(ToolMCP): "mcp",
+		string(ToolCalque): "calque", string(ToolTruffle): "truffle", string(ToolMCP): "spore-host-mcp",
 	} {
 		if got != want {
 			t.Errorf("wire value %q, want %q", got, want)
