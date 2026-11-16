@@ -72,6 +72,12 @@ const (
 	// Component names the part of a tool a resource belongs to (for example
 	// "reaper"). Its value is opaque to this package.
 	Component = "spore-host:component"
+
+	// Permanent, set to PermanentTrue, marks a resource that cleanup must
+	// never remove, whatever else its tags say (for example the
+	// spore-host/spawn-instance-boundary policy). Any other value, or no tag,
+	// means not permanent.
+	Permanent = "spore-host:permanent"
 )
 
 // Tag values with a fixed meaning.
@@ -83,6 +89,10 @@ const (
 	// tool's own long-lived machinery (a reaper Lambda, its IAM role, its
 	// schedule group), as opposed to a resource the tool manages for a user.
 	RoleService = "service"
+
+	// PermanentTrue is the value of the Permanent tag on a resource that
+	// cleanup must never remove.
+	PermanentTrue = "true"
 )
 
 // Tool is a spore.host tool name, used as the value of the ManagedBy tag.
@@ -98,6 +108,15 @@ const (
 	ToolCalque  Tool = "calque"
 	ToolTruffle Tool = "truffle"
 	ToolMCP     Tool = "spore-host-mcp"
+
+	// ToolShared is the ManagedBy value of the few resources that belong to
+	// the suite rather than to one tool: today only the spore-host-lifecycle
+	// coordination table (package lifecycle). No tool's footprint teardown
+	// removes a ToolShared resource, because the delete guard
+	// (footprint.Deletable) requires ManagedBy to name the tool doing the
+	// teardown; the lifecycle table is removed only by
+	// lifecycle.Client.CloseTableIfEmpty, once no tool has an entry in it.
+	ToolShared Tool = "spore-host"
 )
 
 // For returns the standard tag set for a resource that tool creates now:
@@ -153,6 +172,12 @@ func CreatedAt(tags map[string]string) (time.Time, bool) {
 func IsManagedBy(tags map[string]string, tool Tool) bool {
 	v, ok := tags[ManagedBy]
 	return ok && v == string(tool)
+}
+
+// IsPermanent reports whether tags mark the resource as one cleanup must never
+// remove (Permanent=PermanentTrue).
+func IsPermanent(tags map[string]string) bool {
+	return tags[Permanent] == PermanentTrue
 }
 
 // IsService reports whether tags mark the resource as part of a tool's own

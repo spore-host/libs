@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`lifecycle`: the shared-account lease, so one user's teardown can't race another user's setup** (libs#77, part of leave-no-trace spore-host/spore-host#752). One DynamoDB table per region, `spore-host-lifecycle`, plus the same table in a control region for `global` scope. It is pay-per-request and tagged `managed-by=spore-host` and `component=lifecycle`, with no `role` tag: `role=service` is reserved for the live service, and backstop roles deny access to resources carrying it (lagotto#333). It holds one item per tool and scope: `state`, `epoch`, `idleSince`, a fenced `lease` and `holds`.
+  - Creators call `MarkActive` before every create. It creates the table if needed, waiting out a `DELETING` one. It waits (10 s polls, up to 10 min) while a live teardown lease or the table's closing sentinel is in the way, then fails with `ErrWaitTimeout`. A lease whose heartbeat is over 20 min old is taken over.
+  - Backstops call `Observe` each tick and `Claim` once the tool has been idle for the grace, then `Lease.Step` before each delete and `Lease.Finish`, or `Lease.Release` if their post-claim re-check finds activity. A lost lease fails with `ErrLeaseLost`. `CloseTableIfEmpty` deletes the table once no tool item is left.
+  - `AddHold` and `RemoveHold` let one tool keep another active.
+  - The clock, randomness, sleep, poll intervals and timeouts can be injected.
+- **`lifecycle/lifecycletest`: an in-memory DynamoDB for unit tests.** It evaluates condition and update expressions with DynamoDB's semantics, applies `TransactWriteItems` atomically with per-item cancellation reasons, models `CREATING`/`DELETING` tables, and returns the SDK's own error types. Expressions it does not support are rejected, not guessed at. A `Hook` lets a test drive a deterministic interleaving. Tools can use it to test their footprint and teardown code without AWS.
+- **`footprint`: the shared inventory schema and teardown executor** behind each tool's `footprint -o json` and idle teardown (libs#77).
+  - `Report` and `Resource` are the JSON schema, version `1`, with snake_case fields and arrays never `null`. `Decode` rejects an unknown schema version, ownership or class.
+  - `Deletable` is the delete guard. It requires `managed-by=<tool>` and ownership `tagged` (a `legacy-name` match is never deleted), a name matching one of the tool's `NamePattern`s, and class `litter`, `residue` or `active`. It refuses `role=service`, `spore-host:permanent=true`, the `spawn-instance-boundary` policy, and an unset or unknown class.
+  - `NewPlan` orders resources dependents-first and reports a cycle as a `CycleError`.
+  - `Execute` runs a plan in `report` or `reap` mode. Before each delete it re-reads the resource and re-applies the guard to its live tags, then heartbeats the teardown lease. Not-found counts as success. A failure skips what the failed resource depends on, and a lost lease stops the run.
+- **`tags`:** `Permanent` (`spore-host:permanent`), `PermanentTrue` and `IsPermanent`, for resources cleanup must never remove. `ToolShared` (`spore-host`) is the `managed-by` value of resources that belong to the suite rather than to one tool; today that is only the lifecycle table.
+
 ## [0.52.0] - 2026-11-16
 
 ### Added
