@@ -97,7 +97,7 @@ const (
 	ToolLagotto Tool = "lagotto"
 	ToolCalque  Tool = "calque"
 	ToolTruffle Tool = "truffle"
-	ToolMCP     Tool = "mcp"
+	ToolMCP     Tool = "spore-host-mcp"
 )
 
 // For returns the standard tag set for a resource that tool creates now:
