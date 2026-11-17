@@ -30,6 +30,9 @@ The shared-account lease (`spore-host-lifecycle` DynamoDB table) that lets a too
 ### `github.com/spore-host/libs/footprint`
 The JSON schema of `<tool> footprint -o json`, the delete guard (`Deletable`), and the dependency-ordered teardown executor (`NewPlan`, `Execute` in `report` or `reap` mode).
 
+### `github.com/spore-host/libs/lastmile`
+The lazy CLI last mile: called after a tool's main command, it reports stale teardowns to resume, residue left once no lifecycle item remains, empty lifecycle tables and, for a tool with no backstop and full visibility, an idle teardown. Report mode only (`SPORE_LASTMILE=off|report`); at most once per 6 h per tool, account and scope, within a 30 s budget, and never fails the command.
+
 ## Usage
 
 ```go
