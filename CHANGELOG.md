@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.54.0] - 2026-11-17
+
 ## [0.53.0] - 2026-11-16
 
 ### Added
@@ -526,7 +528,8 @@ of this and earlier tags (`update`, `i18n`, `catalog`, `pricing` packages).
 
 ---
 
-[Unreleased]: https://github.com/spore-host/libs/compare/v0.53.0...HEAD
+[Unreleased]: https://github.com/spore-host/libs/compare/v0.54.0...HEAD
+[0.54.0]: https://github.com/spore-host/libs/compare/v0.53.0...v0.54.0
 [0.53.0]: https://github.com/spore-host/libs/compare/v0.52.0...v0.53.0
 [0.52.0]: https://github.com/spore-host/libs/compare/v0.51.5...v0.52.0
 [0.51.5]: https://github.com/spore-host/libs/compare/v0.51.4...v0.51.5
