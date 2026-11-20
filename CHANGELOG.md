@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.55.0] - 2026-11-20
+
 ### Added
 
 - **`lastmile`: the lazy CLI last mile, in report mode** (libs#78, part of leave-no-trace spore-host/spore-host#752). A tool calls `lastmile.Run` after its main command. Run reports what it would do and changes nothing: no `Deleter.Delete` call and no lifecycle write (it never calls `Claim` or `Observe`). Every would-action goes to `Result.WouldDo` and to `Options.Logf`, and `Result.Summary()` gives one line, for example `lastmile REPORT tool=lagotto account=… would=3`. It reports:
@@ -540,7 +542,8 @@ of this and earlier tags (`update`, `i18n`, `catalog`, `pricing` packages).
 
 ---
 
-[Unreleased]: https://github.com/spore-host/libs/compare/v0.54.0...HEAD
+[Unreleased]: https://github.com/spore-host/libs/compare/v0.55.0...HEAD
+[0.55.0]: https://github.com/spore-host/libs/compare/v0.54.0...v0.55.0
 [0.54.0]: https://github.com/spore-host/libs/compare/v0.53.0...v0.54.0
 [0.53.0]: https://github.com/spore-host/libs/compare/v0.52.0...v0.53.0
 [0.52.0]: https://github.com/spore-host/libs/compare/v0.51.5...v0.52.0
