@@ -260,3 +260,46 @@ func reasonCCF(reasons []types.CancellationReason, i int) (map[string]types.Attr
 	}
 	return reasons[i].Item, true
 }
+
+// LeaseStale reports whether it carries a teardown lease whose heartbeat is
+// older than Options.StaleAfter as of the Client's clock: a teardown whose
+// holder is gone, which a creator or backstop may take over. An item with no
+// lease is not stale. It reads nothing and writes nothing.
+func (c *Client) LeaseStale(it Item) bool {
+	return it.Lease != nil && c.isStale(it.Lease.Heartbeat, c.now())
+}
+
+// ListItems returns every tool item in region's table, of every tool and
+// scope, with a strongly consistent scan; the closing sentinel is left out.
+// exists is false when the table does not exist or is not accepting reads
+// (CREATING or DELETING). It writes nothing, so a caller in report mode can
+// see whether the table is empty without CloseTableIfEmpty's sentinel write.
+func (c *Client) ListItems(ctx context.Context, region string) (items []Item, exists bool, err error) {
+	a, err := c.api(region)
+	if err != nil {
+		return nil, false, err
+	}
+	var start map[string]types.AttributeValue
+	for {
+		out, err := a.Scan(ctx, &dynamodb.ScanInput{
+			TableName:         aws.String(TableName),
+			ConsistentRead:    aws.Bool(true),
+			ExclusiveStartKey: start,
+		})
+		if isNotFound(err) {
+			return nil, false, nil
+		}
+		if err != nil {
+			return nil, false, fmt.Errorf("lifecycle: scan %s in %s: %w", TableName, region, err)
+		}
+		for _, m := range out.Items {
+			if str(m, attrPK) != SentinelKey {
+				items = append(items, decodeItem(m))
+			}
+		}
+		if len(out.LastEvaluatedKey) == 0 {
+			return items, true, nil
+		}
+		start = out.LastEvaluatedKey
+	}
+}

@@ -8,7 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`lastmile`: the lazy CLI last mile, in report mode** (libs#78, part of leave-no-trace spore-host/spore-host#752). A tool calls `lastmile.Run` after its main command. Run reports what it would do and changes nothing: no `Deleter.Delete` call and no lifecycle write (it never calls `Claim` or `Observe`). Every would-action goes to `Result.WouldDo` and to `Options.Logf`, and `Result.Summary()` gives one line, for example `lastmile REPORT tool=lagotto account=… would=3`. It reports:
+  - teardowns whose lease went stale (heartbeat over 20 min old), with what their plan would still delete;
+  - the tool's `Options.Residue` (for example lagotto's shared invoke role), once no lifecycle item of the tool remains in any scope;
+  - empty `spore-host-lifecycle` tables;
+  - for a tool that sets `FullVisibility` (spawn with no backstop), an idle teardown past the 24 h grace. A failed activity read counts as active. Without `FullVisibility` the idle check is skipped, and the note says why.
+- `lastmile` runs at most once per 6 h per tool, account and scope. The state is kept in `~/.spore-host/lifecycle.json`, written atomically with mode 0600, and a corrupt file is reset. Each run has a 30 s budget. A scope the budget cuts off is not stamped, so the next invocation resumes it. Run returns no error and recovers panics, including panics in the tool's callbacks, so every problem ends up in `Result.Warnings`. `SPORE_LASTMILE=off|report|reap` (`ModeFromEnv`) switches it, and the default is `report`. `reap` runs as report mode, with a warning, until libs#79.
+- **`lifecycle`:** `Client.LeaseStale(item)` reports whether an item's lease is stale on the Client's clock. `Client.ListItems(ctx, region)` lists every tool item in a region's table, and whether the table exists, with a consistent scan and no write.
+
 ## [0.54.0] - 2026-11-17
+
+No changes. This tag was cut by mistake before libs#84 had merged, so it is identical to 0.53.0. Its intended contents, `lastmile` and the read-only `lifecycle` helpers, ship in 0.55.0.
 
 ## [0.53.0] - 2026-11-16
 
