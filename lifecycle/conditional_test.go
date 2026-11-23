@@ -3,9 +3,12 @@ package lifecycle_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/spore-host/libs/lifecycle"
 )
 
@@ -292,3 +295,100 @@ func TestMarkDoneClosing(t *testing.T) {
 		t.Errorf("closing: %v", err)
 	}
 }
+
+// TestConditionalEdges: the error paths of the conditional writes.
+func TestConditionalEdges(t *testing.T) {
+	ctx := context.Background()
+	if e := lifecycle.ExpectOf(lifecycle.Item{Epoch: 3}, false); e != (lifecycle.Expect{}) {
+		t.Errorf("ExpectOf absent = %+v", e)
+	}
+	e := newEnv(t)
+	// An invalid scope: every call refuses before any request.
+	if _, err := e.c.Mark(ctx, tool, ""); err == nil {
+		t.Error("Mark with no scope")
+	}
+	if _, err := e.c.MarkDone(ctx, tool, "", "x"); err == nil {
+		t.Error("MarkDone with no scope")
+	}
+	if _, err := e.c.SetIdleIfUnchanged(ctx, tool, "", lifecycle.Expect{}); err == nil {
+		t.Error("SetIdleIfUnchanged with no scope")
+	}
+	if _, err := e.c.ClaimIfUnchanged(ctx, tool, "", 0, lifecycle.Expect{}); err == nil {
+		t.Error("ClaimIfUnchanged with no scope")
+	}
+	// The table cannot be created for an absent item.
+	e.fakes[region].Err = func(op string, _ any) error {
+		if op == "CreateTable" {
+			return errors.New("AccessDenied")
+		}
+		return nil
+	}
+	if _, err := e.c.SetIdleIfUnchanged(ctx, tool, region, lifecycle.Expect{}); err == nil || errors.Is(err, lifecycle.ErrChanged) {
+		t.Errorf("no table, and none can be made: %v", err)
+	}
+	// An item expected but gone with its table: changed.
+	e2 := newEnv(t)
+	if _, err := e2.c.SetIdleIfUnchanged(ctx, tool, region, lifecycle.Expect{Exists: true, State: lifecycle.StateIdle}); !errors.Is(err, lifecycle.ErrChanged) {
+		t.Errorf("no table for an existing item: %v", err)
+	}
+	// A creator marks between the claim's read and its write.
+	e3 := newEnv(t)
+	if _, err := e3.c.SetIdleIfUnchanged(ctx, tool, region, lifecycle.Expect{}); err != nil {
+		t.Fatal(err)
+	}
+	it, ok := e3.read(region)
+	raced := false
+	e3.fakes[region].Hook = func(ctx context.Context, op string) {
+		if op == "UpdateItem" && !raced {
+			raced = true
+			if _, err := e3.client("a creator").Mark(ctx, tool, region); err != nil {
+				t.Error(err)
+			}
+		}
+	}
+	if _, err := e3.c.ClaimIfUnchanged(ctx, tool, region, 0, lifecycle.ExpectOf(it, ok)); !errors.Is(err, lifecycle.ErrNotClaimable) {
+		t.Errorf("a mark while claiming: %v", err)
+	}
+	// The table goes between the claim's read and its write.
+	e4 := newEnv(t)
+	if _, err := e4.c.SetIdleIfUnchanged(ctx, tool, region, lifecycle.Expect{}); err != nil {
+		t.Fatal(err)
+	}
+	it, ok = e4.read(region)
+	e4.fakes[region].Err = func(op string, _ any) error {
+		if op == "UpdateItem" {
+			return &types.ResourceNotFoundException{Message: aws.String("gone")}
+		}
+		return nil
+	}
+	if _, err := e4.c.ClaimIfUnchanged(ctx, tool, region, 0, lifecycle.ExpectOf(it, ok)); !errors.Is(err, lifecycle.ErrNotClaimable) {
+		t.Errorf("a table gone while claiming: %v", err)
+	}
+	// A transaction conflict (not a condition): reported as such.
+	e5 := newEnv(t)
+	tok, _ := e5.c.Mark(ctx, tool, region)
+	it, ok = e5.read(region)
+	conflict := &types.TransactionCanceledException{Message: aws.String("conflict"),
+		CancellationReasons: []types.CancellationReason{{Code: aws.String("None")}, {Code: aws.String("TransactionConflict")}}}
+	e5.fakes[region].Err = func(op string, _ any) error {
+		if op == "TransactWriteItems" {
+			return conflict
+		}
+		return nil
+	}
+	if _, err := e5.c.MarkDone(ctx, tool, region, tok); err == nil || !strings.Contains(err.Error(), "conflict") {
+		t.Errorf("MarkDone conflict: %v", err)
+	}
+	if _, err := e5.c.SetIdleIfUnchanged(ctx, tool, region, lifecycle.ExpectOf(it, ok)); err == nil || !strings.Contains(err.Error(), "conflict") {
+		t.Errorf("SetIdleIfUnchanged conflict: %v", err)
+	}
+	// A failing token source.
+	e6 := newEnv(t, func(o *lifecycle.Options) { o.Rand = failingReader{} })
+	if _, err := e6.c.Mark(ctx, tool, region); err == nil {
+		t.Error("Mark with no randomness")
+	}
+}
+
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) { return 0, errors.New("no entropy") }
