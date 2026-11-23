@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -29,7 +30,8 @@ import (
 // resources: one that claims later must first see the tool idle for its
 // grace period, and one that held a lease before has lost it.
 func (c *Client) MarkActive(ctx context.Context, tool tags.Tool, scope string) error {
-	return c.activate(ctx, tool, scope, "")
+	_, err := c.Mark(ctx, tool, scope)
+	return err
 }
 
 // AddHold records that holder depends on tool's resources in scope (for
@@ -40,7 +42,7 @@ func (c *Client) AddHold(ctx context.Context, tool tags.Tool, scope string, hold
 	if err := validate(holder, scope); err != nil {
 		return err
 	}
-	return c.activate(ctx, tool, scope, holder)
+	return c.activate(ctx, tool, scope, holder, "")
 }
 
 // RemoveHold removes holder's hold on tool in scope. Removing a hold that does
@@ -74,7 +76,7 @@ type blocked struct {
 	sentinel time.Time // the sentinel's since, when what == "sentinel"
 }
 
-func (c *Client) activate(ctx context.Context, tool tags.Tool, scope string, holder tags.Tool) error {
+func (c *Client) activate(ctx context.Context, tool tags.Tool, scope string, holder tags.Tool, mark string) error {
 	a, region, key, err := c.target(tool, scope)
 	if err != nil {
 		return err
@@ -82,7 +84,7 @@ func (c *Client) activate(ctx context.Context, tool tags.Tool, scope string, hol
 	start := c.now()
 	missing, polls := 0, 0
 	for {
-		b, err := c.activateOnce(ctx, a, key, tool, scope, holder)
+		b, err := c.activateOnce(ctx, a, key, tool, scope, holder, mark)
 		switch {
 		case err == nil && b == nil:
 			return nil
@@ -129,10 +131,10 @@ func (c *Client) activate(ctx context.Context, tool tags.Tool, scope string, hol
 // activateOnce runs the activation transaction once. It returns a non-nil
 // *blocked when the transaction was cancelled by the sentinel, a live lease,
 // or a conflicting transaction.
-func (c *Client) activateOnce(ctx context.Context, a API, key string, tool tags.Tool, scope string, holder tags.Tool) (*blocked, error) {
+func (c *Client) activateOnce(ctx context.Context, a API, key string, tool tags.Tool, scope string, holder tags.Tool, mark string) (*blocked, error) {
 	now := c.now()
-	upd := "SET #state = :active, #epoch = if_not_exists(#epoch, :zero) + :one, #tool = :tool, #scope = :scope REMOVE #idleSince, #lease"
-	nm := names(attrState, attrEpoch, attrTool, attrScope, attrIdleSince, attrLease, attrHeartbeat)
+	upd := "SET #state = :active, #epoch = if_not_exists(#epoch, :zero) + :one, #tool = :tool, #scope = :scope REMOVE #idleSince, #lease, #incomplete"
+	nm := names(attrState, attrEpoch, attrTool, attrScope, attrIdleSince, attrLease, attrHeartbeat, attrIncomplete)
 	vals := map[string]types.AttributeValue{
 		":active": s(string(StateActive)),
 		":zero":   n(0),
@@ -140,6 +142,11 @@ func (c *Client) activateOnce(ctx context.Context, a API, key string, tool tags.
 		":tool":   s(string(tool)),
 		":scope":  s(scope),
 		":stale":  s(c.staleBefore(now)),
+	}
+	if mark != "" {
+		upd = strings.Replace(upd, " REMOVE ", ", #mark = :mark REMOVE ", 1)
+		nm["#mark"] = attrMark
+		vals[":mark"] = &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{attrToken: s(mark), attrAt: s(formatTime(now))}}
 	}
 	if holder != "" {
 		upd += " ADD #holds :holder"

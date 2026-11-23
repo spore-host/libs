@@ -18,19 +18,22 @@ import (
 // Attribute names. Every expression refers to them through #placeholders,
 // since several (state, step, owner) are DynamoDB reserved words.
 const (
-	attrPK        = "pk"
-	attrState     = "state"
-	attrEpoch     = "epoch"
-	attrIdleSince = "idleSince"
-	attrLease     = "lease"
-	attrHolds     = "holds"
-	attrTool      = "tool"
-	attrScope     = "scope"
-	attrToken     = "token"
-	attrOwner     = "owner"
-	attrHeartbeat = "heartbeat"
-	attrStep      = "step"
-	attrSince     = "since"
+	attrPK         = "pk"
+	attrState      = "state"
+	attrEpoch      = "epoch"
+	attrIdleSince  = "idleSince"
+	attrLease      = "lease"
+	attrHolds      = "holds"
+	attrTool       = "tool"
+	attrScope      = "scope"
+	attrToken      = "token"
+	attrOwner      = "owner"
+	attrHeartbeat  = "heartbeat"
+	attrStep       = "step"
+	attrSince      = "since"
+	attrMark       = "mark"
+	attrAt         = "at"
+	attrIncomplete = "incomplete"
 )
 
 // Item is a tool item as read from the table.
@@ -47,6 +50,18 @@ type Item struct {
 	Lease *LeaseInfo
 	// Holds are the tools that depend on this one in this scope, sorted.
 	Holds []tags.Tool
+	// Mark is the creator mark of the last MarkActive or Mark, while the
+	// item is ACTIVE from it; nil otherwise. MarkDone with its token ends it.
+	Mark *MarkInfo
+	// Incomplete: a teardown stopped partway and suspended its lease
+	// (Lease.Suspend); the next backstop resumes it. Any activity clears it.
+	Incomplete bool
+}
+
+// MarkInfo is a creator mark as stored in a tool item.
+type MarkInfo struct {
+	Token string
+	At    time.Time
 }
 
 // LeaseInfo is a teardown claim as stored in a tool item.
@@ -93,6 +108,12 @@ func decodeItem(m map[string]types.AttributeValue) Item {
 			Heartbeat: parseTime(str(l.Value, attrHeartbeat)),
 			Step:      str(l.Value, attrStep),
 		}
+	}
+	if mk, ok := m[attrMark].(*types.AttributeValueMemberM); ok {
+		it.Mark = &MarkInfo{Token: str(mk.Value, attrToken), At: parseTime(str(mk.Value, attrAt))}
+	}
+	if b, ok := m[attrIncomplete].(*types.AttributeValueMemberBOOL); ok {
+		it.Incomplete = b.Value
 	}
 	if h, ok := m[attrHolds].(*types.AttributeValueMemberSS); ok {
 		for _, v := range h.Value {

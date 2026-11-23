@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`lifecycle`: conditional writes, for a teardown that must act on an item only as it judged it** (lagotto#340). `Expect` (and `ExpectOf(item, exists)`) is an item's epoch, state, lease token and creator-mark token as read. `SetIdleIfUnchanged` records a tool idle (or creates the item IDLE, with its table) only if the item is still exactly that, and `ClaimIfUnchanged` claims only then (an IDLE item past its grace, or a TEARDOWN one whose lease went stale). Both return `ErrChanged` or a *NotClaimableError when a creator marked, a hold appeared or another claim landed since the read. `Observe` and `Claim` decide on their own read, so an idle Observe used to turn a creator's fresh ACTIVE mark IDLE, and the Claim after it took the item at the creator's new epoch without noticing.
+- **Creator marks with an end.** Every `MarkActive` (and `AddHold`) now writes a creator mark: a token and a time (`Item.Mark`). `Mark` is `MarkActive` returning that token, and `MarkDone(token)` ends it: the item goes IDLE, idle from that moment, unless another creator has marked since. So a scope no backstop observes, such as the global scope, is ACTIVE exactly while a creator runs. An idle `Observe` removes the mark along with ACTIVE.
+- **`Lease.Suspend`** gives a lease up after a teardown stopped partway. The item goes IDLE, marked `Item.Incomplete`, with no lease, so no creator waits for it and the next backstop resumes it. Any activity (`MarkActive`, `Mark`, an active `Observe`) clears the mark, and a claim clears it too.
+
 ## [0.55.0] - 2026-11-20
 
 ### Added

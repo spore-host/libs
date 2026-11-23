@@ -70,8 +70,8 @@ func (c *Client) observeOnce(ctx context.Context, a API, key string, tool tags.T
 		if exists && it.State == StateActive && it.IdleSince.IsZero() && it.Lease == nil {
 			return nil // nothing to record
 		}
-		upd = "SET #state = :active, #tool = :tool, #scope = :scope REMOVE #idleSince, #lease"
-		nm = names(attrState, attrTool, attrScope, attrIdleSince, attrLease)
+		upd = "SET #state = :active, #tool = :tool, #scope = :scope REMOVE #idleSince, #lease, #incomplete"
+		nm = names(attrState, attrTool, attrScope, attrIdleSince, attrLease, attrIncomplete)
 		vals[":active"] = s(string(StateActive))
 	} else {
 		if exists && it.Lease != nil && !c.isStale(it.Lease.Heartbeat, now) {
@@ -80,9 +80,9 @@ func (c *Client) observeOnce(ctx context.Context, a API, key string, tool tags.T
 		if exists && it.State == StateIdle && !it.IdleSince.IsZero() && it.Lease == nil {
 			return nil // already idle; keep the first idleSince
 		}
-		upd = "SET #state = :idle, #idleSince = if_not_exists(#idleSince, :now), #tool = :tool, #scope = :scope REMOVE #lease"
+		upd = "SET #state = :idle, #idleSince = if_not_exists(#idleSince, :now), #tool = :tool, #scope = :scope REMOVE #lease, #mark"
 		cond = epochCond(it.Epoch, vals) + " AND attribute_not_exists(#holds) AND " + noLiveLease
-		nm = names(attrState, attrIdleSince, attrTool, attrScope, attrLease, attrEpoch, attrHolds, attrHeartbeat)
+		nm = names(attrState, attrIdleSince, attrTool, attrScope, attrLease, attrEpoch, attrHolds, attrHeartbeat, attrMark)
 		vals[":idle"] = s(string(StateIdle))
 		vals[":now"] = s(formatTime(now))
 		vals[":stale"] = s(c.staleBefore(now))
