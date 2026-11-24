@@ -34,6 +34,11 @@ const (
 	attrMarks      = "marks"
 	attrActiveAt   = "activeAt"
 	attrIncomplete = "incomplete"
+	attrPulseAt    = "pulseAt"
+	attrLastActive = "lastActivityAt"
+	attrClient     = "client"
+	attrStampState = "stampState"
+	attrStampEpoch = "stampEpoch"
 )
 
 // Item is a tool item as read from the table.
@@ -51,19 +56,32 @@ type Item struct {
 	// Holds are the tools that depend on this one in this scope, sorted.
 	Holds []tags.Tool
 	// Marks are the creators running in this scope (Mark), each until its
-	// MarkDone, and "*" for MarkActive's activity, which only a backstop's
-	// idle Observe ends. Sorted by token.
+	// MarkDone (or until a reader takes it for a creator that died: InUse).
+	// Sorted by token.
 	Marks []MarkInfo
 	// ActiveAt is when the item was last activated (Mark, MarkActive,
 	// AddHold), or zero.
 	ActiveAt time.Time
+	// PulseAt is the last MarkActive: activity with no end of its own. It
+	// keeps the item in use for the reader's mark bound (InUse).
+	PulseAt time.Time
+	// LastActivityAt is the last change to what keeps the item in use: a
+	// mark added or removed, a hold added or removed, a MarkActive, an
+	// active Observe, a Release.
+	LastActivityAt time.Time
+	// StampState and StampEpoch are the state and epoch the last write that
+	// set the state left (every write of this package stamps them). An item
+	// whose State or Epoch differs was last changed by an older client,
+	// which records no times (InUse).
+	StampState State
+	StampEpoch int64
 	// Incomplete: a teardown stopped partway and suspended its lease
 	// (Lease.Suspend); the next backstop resumes it. Any activity clears it.
 	Incomplete bool
 }
 
-// MarkInfo is a creator mark: its token (what Mark returned; "*" for
-// MarkActive's) and when it was made (for "*", the item's ActiveAt).
+// MarkInfo is a creator mark: its token (what Mark returned) and when it was
+// committed.
 // lifecycle sets no bound on a mark's age: a caller that takes an old mark
 // for a creator that died decides its own, and acts on it only as judged
 // (SetIdleIfUnchanged).
@@ -72,16 +90,10 @@ type MarkInfo struct {
 	At    time.Time
 }
 
-// anyActivity is the mark MarkActive adds: activity no creator ends.
-const anyActivity = "*"
-
 // markElement is how a mark is stored: token|at.
 func markElement(token string, at time.Time) string { return token + "|" + formatTime(at) }
 
-func decodeMark(e string, activeAt time.Time) MarkInfo {
-	if e == anyActivity {
-		return MarkInfo{Token: e, At: activeAt}
-	}
+func decodeMark(e string) MarkInfo {
 	for i := len(e) - 1; i >= 0; i-- {
 		if e[i] == '|' {
 			return MarkInfo{Token: e, At: parseTime(e[i+1:])}
@@ -92,8 +104,10 @@ func decodeMark(e string, activeAt time.Time) MarkInfo {
 
 // LeaseInfo is a teardown claim as stored in a tool item.
 type LeaseInfo struct {
-	Token     string
-	Owner     string
+	Token string
+	Owner string
+	// Client is the claiming Client's own random id (AdoptLease).
+	Client    string
 	Heartbeat time.Time
 	Step      string
 }
@@ -131,14 +145,21 @@ func decodeItem(m map[string]types.AttributeValue) Item {
 		it.Lease = &LeaseInfo{
 			Token:     str(l.Value, attrToken),
 			Owner:     str(l.Value, attrOwner),
+			Client:    str(l.Value, attrClient),
 			Heartbeat: parseTime(str(l.Value, attrHeartbeat)),
 			Step:      str(l.Value, attrStep),
 		}
 	}
+	it.StampState = State(str(m, attrStampState))
+	if n, ok := m[attrStampEpoch].(*types.AttributeValueMemberN); ok {
+		it.StampEpoch, _ = strconv.ParseInt(n.Value, 10, 64)
+	}
 	it.ActiveAt = parseTime(str(m, attrActiveAt))
+	it.PulseAt = parseTime(str(m, attrPulseAt))
+	it.LastActivityAt = parseTime(str(m, attrLastActive))
 	if mk, ok := m[attrMarks].(*types.AttributeValueMemberSS); ok {
 		for _, e := range mk.Value {
-			it.Marks = append(it.Marks, decodeMark(e, it.ActiveAt))
+			it.Marks = append(it.Marks, decodeMark(e))
 		}
 		sort.Slice(it.Marks, func(i, j int) bool { return it.Marks[i].Token < it.Marks[j].Token })
 	}
@@ -152,6 +173,20 @@ func decodeItem(m map[string]types.AttributeValue) Item {
 		sort.Slice(it.Holds, func(i, j int) bool { return it.Holds[i] < it.Holds[j] })
 	}
 	return it
+}
+
+// stamp is the SET clause every write that sets the state adds: the state
+// it leaves and the epoch (bumped, for an activation), so that a reader can
+// tell a write by an older client since (Item.StampState).
+func stamp(st State, bump bool, nm map[string]string, vals map[string]types.AttributeValue) string {
+	nm["#stampState"], nm["#stampEpoch"], nm["#epoch"] = attrStampState, attrStampEpoch, attrEpoch
+	vals[":stampState"], vals[":szero"] = s(string(st)), n(0)
+	e := ", #stampState = :stampState, #stampEpoch = if_not_exists(#epoch, :szero)"
+	if bump {
+		vals[":sone"] = n(1)
+		e += " + :sone"
+	}
+	return e
 }
 
 func s(v string) types.AttributeValue { return &types.AttributeValueMemberS{Value: v} }

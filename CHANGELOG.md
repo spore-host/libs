@@ -10,23 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`lifecycle`: conditional writes**, for a teardown that must act on an item only as it judged it (lagotto#340). `Expect` (and `ExpectOf(item, exists)`) is an item's epoch, state, lease token and creator-mark tokens, as read.
-  - `SetIdleIfUnchanged` records a tool idle, or creates the item IDLE along with its table, only if the item is still exactly that. It never removes a live lease.
-  - `ClaimIfUnchanged` claims only then: an IDLE item past its grace, or a TEARDOWN item whose lease went stale.
+- **`lifecycle`: readers judge, writers never idle** (lagotto#340). `InUse(item, now, markBound)` and `IdleSince(item, now, markBound)` (and the same on a `Client`, with its clock and `StaleAfter`) decide from what an item holds and its times whether it is in use and since when it has been idle. For new readers they are authoritative; the state field stays for older ones.
+  - In use: a live lease; a hold; a creator mark younger than `markBound` (or with no time); a `MarkActive` younger than `markBound`; or ACTIVE from a write that recorded no times (an older client's: its state or epoch is not what this package last stamped).
+  - Idle since: the latest of `LastActivityAt`, each mark's time plus `markBound`, the last `MarkActive` plus `markBound`, and a lease's heartbeat plus `StaleAfter`; and the stored `idleSince` when an older client wrote the state last or the item has none of those times. An item a writer could not finish with (a failed `MarkDone`, a lost reply, a creator that died) ages out by itself.
+  - New attributes: `lastActivityAt`, `pulseAt` (the last `MarkActive`), `stampState` and `stampEpoch` (the state and epoch this package's last state write left), and the lease's `client`. `Options.MarkBound` (default 1 h) is how long an idle `Observe` takes a creator mark for a running creator.
+- **Conditional writes**, for a backstop or actor that must act on an item only as it judged it. `Expect` (and `ExpectOf(item, exists)`) is an item's epoch, state, lease token, creator-mark tokens and `lastActivityAt`, as read.
+  - `SetIdleIfUnchanged` records a tool idle, or creates the item IDLE along with its table, only if the item is still exactly that. It never removes a live lease. When the write applied but reading it back failed, the error wraps `ErrApplied`.
+  - `ClaimIfUnchanged` claims only then: an IDLE item past its grace (with no lease or a stale one), or a TEARDOWN item whose lease went stale. A caller that judged with `IdleSince` passes grace 0.
   - Both refuse (`ErrChanged`, or a `*NotClaimableError` saying "changed since it was judged") when a creator marked, a creator finished, a hold appeared or another claim landed since the read.
   - `LockIfUnchanged` takes a lease without changing the item's state, a short exclusion for a backstop's maintenance; `Lease.Unlock` gives it back.
-- **"In use" with an end.** `Mark` adds a creator mark (`Item.Marks`: a set, one token and time per running creator) and returns its token. `MarkDone(token)` removes that mark. The last `MarkDone` or `RemoveHold` leaves no mark and no hold, and sets the item IDLE from that moment. A scope no backstop observes, such as the global scope, is therefore ACTIVE exactly while something uses it. lifecycle records each mark's time but sets no bound on its age: a caller that takes an old mark for a creator that died decides its own bound, and acts on it with `SetIdleIfUnchanged`. `Item.ActiveAt` is the time of the last activation.
+- **Creator marks.** `Mark` adds a creator mark (`Item.Marks`: a set, one token and commit time per running creator) and returns its token, also with an error, so a mark that committed though its answer was lost can still be ended. `MarkDone(token)` removes that mark, stamps `lastActivityAt`, and changes nothing else. `Item.ActiveAt` is the time of the last activation.
 - **`Lease.Suspend`** gives a lease up after a teardown stopped partway. The item goes IDLE, marked `Item.Incomplete`, with no lease, so no creator waits for it, and the next backstop resumes it.
-- **`AdoptLease`** returns the live lease held in the client's own owner name, for a claim whose answer was lost, so the caller can give it back. Owner names must be unique to a run.
-- `MarkDone`, `SetIdleIfUnchanged` and the idle step of `RemoveHold` retry a throttle or a conflicting transaction.
+- **`AdoptLease`** returns the live lease this very `Client` took (its owner name and its own random id both match), for a claim whose answer was lost, so the caller can give it back. A `Client` with no owner (`"unknown"`) adopts nothing.
+- `MarkDone` and `SetIdleIfUnchanged` retry a throttle or a conflicting transaction.
 
 ### Changed
 
-- **`MarkActive`** now records a mark, `"*"`: activity that no creator ends, which only a backstop's idle `Observe` clears. It also sets `Item.ActiveAt`, and clears a suspended teardown's `Incomplete` mark.
-- **`AddHold`** writes no creator mark. A hold is its own "in use": an earlier creator's `MarkDone` leaves an item a hold keeps ACTIVE.
-- **`RemoveHold`** sets the item IDLE when it removes the last thing in use (no hold, no mark).
-- **`Observe`**: an idle `Observe` clears every creator mark along with ACTIVE. An active one clears `Incomplete`, also on an item that is already ACTIVE.
-- **`Claim` and `Lease.Release`** clear `Incomplete`.
+- **`MarkActive`** stamps `pulseAt` and `lastActivityAt`, and clears a suspended teardown's `Incomplete` mark.
+- **`RemoveHold`** removes the hold and stamps `lastActivityAt`, nothing else. Like `MarkDone`, it succeeds while the table is closing.
+- **`Observe`**: an idle `Observe` records nothing while a creator mark younger than `Options.MarkBound` is on the item (a creator it cannot see), and clears older marks along with ACTIVE. An active one stamps `lastActivityAt` on every call, so it now writes on every tick, and clears `Incomplete`.
+- **`Lease.Release`** stamps `lastActivityAt` and clears `Incomplete`. **`Claim`** clears `Incomplete`.
+- Every write that sets the state stamps `stampState` and `stampEpoch`.
 
 ## [0.55.0] - 2026-11-20
 

@@ -67,12 +67,13 @@ func (c *Client) observeOnce(ctx context.Context, a API, key string, tool tags.T
 	var upd, cond string
 	var nm map[string]string
 	if active || len(it.Holds) > 0 {
-		if exists && it.State == StateActive && it.IdleSince.IsZero() && it.Lease == nil && !it.Incomplete {
-			return nil // nothing to record
-		}
-		upd = "SET #state = :active, #tool = :tool, #scope = :scope REMOVE #idleSince, #lease, #incomplete"
-		nm = names(attrState, attrTool, attrScope, attrIdleSince, attrLease, attrIncomplete)
+		// Recorded every time, so a reader's IdleSince counts from the last
+		// activity seen.
+		nm = names(attrState, attrTool, attrScope, attrIdleSince, attrLease, attrIncomplete, attrLastActive)
 		vals[":active"] = s(string(StateActive))
+		vals[":now"] = s(formatTime(now))
+		upd = "SET #state = :active, #tool = :tool, #scope = :scope, #lastActivityAt = :now" + stamp(StateActive, false, nm, vals) +
+			" REMOVE #idleSince, #lease, #incomplete"
 	} else {
 		if exists && it.Lease != nil && !c.isStale(it.Lease.Heartbeat, now) {
 			return nil // a teardown is in progress
@@ -80,12 +81,19 @@ func (c *Client) observeOnce(ctx context.Context, a API, key string, tool tags.T
 		if exists && it.State == StateIdle && !it.IdleSince.IsZero() && it.Lease == nil {
 			return nil // already idle; keep the first idleSince
 		}
-		upd = "SET #state = :idle, #idleSince = if_not_exists(#idleSince, :now), #tool = :tool, #scope = :scope REMOVE #lease, #marks"
-		cond = epochCond(it.Epoch, vals) + " AND attribute_not_exists(#holds) AND " + noLiveLease
+		if exists && liveMark(it, now, c.o.MarkBound) {
+			// A creator is running (one the backstop cannot see): record
+			// nothing. A mark older than MarkBound is a creator that died,
+			// and is removed with the rest.
+			return nil
+		}
 		nm = names(attrState, attrIdleSince, attrTool, attrScope, attrLease, attrEpoch, attrHolds, attrHeartbeat, attrMarks)
 		vals[":idle"] = s(string(StateIdle))
 		vals[":now"] = s(formatTime(now))
 		vals[":stale"] = s(c.staleBefore(now))
+		upd = "SET #state = :idle, #idleSince = if_not_exists(#idleSince, :now), #tool = :tool, #scope = :scope" +
+			stamp(StateIdle, false, nm, vals) + " REMOVE #lease, #marks"
+		cond = epochCond(it.Epoch, vals) + " AND attribute_not_exists(#holds) AND " + noLiveLease
 	}
 	u := &types.Update{
 		TableName:                 aws.String(TableName),
@@ -160,6 +168,10 @@ func (c *Client) Claim(ctx context.Context, tool tags.Tool, scope string, grace 
 	if err != nil {
 		return nil, err
 	}
+	id, err := c.clientID()
+	if err != nil {
+		return nil, err
+	}
 	vals := map[string]types.AttributeValue{
 		":teardown": s(string(StateTeardown)),
 		":idle":     s(string(StateIdle)),
@@ -168,18 +180,20 @@ func (c *Client) Claim(ctx context.Context, tool tags.Tool, scope string, grace 
 		":lease": &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{
 			attrToken:     s(token),
 			attrOwner:     s(c.o.Owner),
+			attrClient:    s(id),
 			attrHeartbeat: s(formatTime(now)),
 			attrStep:      s(""),
 		}},
 	}
 	cond := "#state = :idle AND " + epochCond(it.Epoch, vals) +
 		" AND #idleSince <= :cutoff AND attribute_not_exists(#holds) AND " + noLiveLease
+	nm := names(attrState, attrLease, attrEpoch, attrIdleSince, attrHolds, attrHeartbeat, attrIncomplete)
 	_, err = a.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 		TableName:                 aws.String(TableName),
 		Key:                       keyOf(key),
-		UpdateExpression:          aws.String("SET #state = :teardown, #lease = :lease REMOVE #incomplete"),
+		UpdateExpression:          aws.String("SET #state = :teardown, #lease = :lease" + stamp(StateTeardown, false, nm, vals) + " REMOVE #incomplete"),
 		ConditionExpression:       aws.String(cond),
-		ExpressionAttributeNames:  names(attrState, attrLease, attrEpoch, attrIdleSince, attrHolds, attrHeartbeat, attrIncomplete),
+		ExpressionAttributeNames:  nm,
 		ExpressionAttributeValues: vals,
 	})
 	switch {
@@ -241,12 +255,13 @@ func (l *Lease) Step(ctx context.Context, name string) error {
 // to ACTIVE and idleSince is removed, so the grace period starts over.
 func (l *Lease) Release(ctx context.Context) error {
 	return l.write(ctx, "release", func(cond string, nm map[string]string, vals map[string]types.AttributeValue) error {
-		nm["#state"], nm["#idleSince"], nm["#incomplete"] = attrState, attrIdleSince, attrIncomplete
-		vals[":active"] = s(string(StateActive))
+		nm["#state"], nm["#idleSince"], nm["#incomplete"], nm["#lastActivityAt"] = attrState, attrIdleSince, attrIncomplete, attrLastActive
+		vals[":active"], vals[":now"] = s(string(StateActive)), s(formatTime(l.c.now()))
 		_, err := l.a.UpdateItem(ctx, &dynamodb.UpdateItemInput{
-			TableName:                 aws.String(TableName),
-			Key:                       keyOf(l.key),
-			UpdateExpression:          aws.String("SET #state = :active REMOVE #lease, #idleSince, #incomplete"),
+			TableName: aws.String(TableName),
+			Key:       keyOf(l.key),
+			UpdateExpression: aws.String("SET #state = :active, #lastActivityAt = :now" + stamp(StateActive, false, nm, vals) +
+				" REMOVE #lease, #idleSince, #incomplete"),
 			ConditionExpression:       aws.String(cond),
 			ExpressionAttributeNames:  nm,
 			ExpressionAttributeValues: vals,

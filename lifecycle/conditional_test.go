@@ -3,7 +3,6 @@ package lifecycle_test
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -31,9 +30,13 @@ func tokens(it lifecycle.Item) []string {
 	return out
 }
 
-// TestMarksAreASet: overlapping creators each hold a mark; the item stays
-// ACTIVE until the last one is done, in any order, and only then goes IDLE,
-// idle from that moment.
+// bound is the mark bound the tests judge with.
+const bound = time.Hour
+
+// TestMarksAreASet: overlapping creators each hold a mark, ended in any
+// order; MarkDone only removes its own and stamps the time; no writer idles
+// the item: the reader judges it in use while any mark is, and idle from the
+// last done.
 func TestMarksAreASet(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
@@ -44,7 +47,7 @@ func TestMarksAreASet(t *testing.T) {
 	}
 	it, _ := e.read(lifecycle.ScopeGlobal)
 	if it.State != lifecycle.StateActive || len(it.Marks) != 1 || it.Marks[0].Token != ta || !it.Marks[0].At.Equal(t0) || it.Epoch != 1 ||
-		!it.ActiveAt.Equal(t0) {
+		!it.ActiveAt.Equal(t0) || it.StampState != lifecycle.StateActive || it.StampEpoch != 1 {
 		t.Fatalf("after Mark: %+v", it)
 	}
 	e.advance(time.Minute)
@@ -53,10 +56,11 @@ func TestMarksAreASet(t *testing.T) {
 		t.Fatalf("second mark %q %v", tb, err)
 	}
 	// The later creator finishes first: the earlier one still runs.
-	if done, err := b.MarkDone(ctx, tool, lifecycle.ScopeGlobal, tb); done || err != nil {
+	if done, err := b.MarkDone(ctx, tool, lifecycle.ScopeGlobal, tb); !done || err != nil {
 		t.Errorf("a done with another creator running: %v %v", done, err)
 	}
-	if it, _ := e.read(lifecycle.ScopeGlobal); it.State != lifecycle.StateActive || len(it.Marks) != 1 || it.Marks[0].Token != ta {
+	it, _ = e.read(lifecycle.ScopeGlobal)
+	if it.State != lifecycle.StateActive || len(it.Marks) != 1 || it.Marks[0].Token != ta || !lifecycle.InUse(it, e.clock(), bound) {
 		t.Errorf("a creator still running lost its mark: %+v", it)
 	}
 	e.advance(time.Minute)
@@ -64,8 +68,12 @@ func TestMarksAreASet(t *testing.T) {
 		t.Errorf("the last done: %v %v", done, err)
 	}
 	it, _ = e.read(lifecycle.ScopeGlobal)
-	if it.State != lifecycle.StateIdle || len(it.Marks) != 0 || !it.IdleSince.Equal(t0.Add(2*time.Minute)) {
+	// The state is left as it was (no writer idles); the reader judges.
+	if it.State != lifecycle.StateActive || len(it.Marks) != 0 || !it.LastActivityAt.Equal(t0.Add(2*time.Minute)) {
 		t.Errorf("after the last done: %+v", it)
+	}
+	if lifecycle.InUse(it, e.clock(), bound) || !lifecycle.IdleSince(it, e.clock(), bound).Equal(t0.Add(2*time.Minute)) {
+		t.Errorf("judged after the last done: in use %v, idle since %v", lifecycle.InUse(it, e.clock(), bound), lifecycle.IdleSince(it, e.clock(), bound))
 	}
 	// A done twice, or on an item or table that is gone, is not an error.
 	if done, err := a.MarkDone(ctx, tool, lifecycle.ScopeGlobal, ta); done || err != nil {
@@ -76,63 +84,73 @@ func TestMarksAreASet(t *testing.T) {
 	}
 }
 
-// TestHoldsAreInUse: a hold keeps an item in use like a mark; an item
-// activated only by AddHold goes IDLE when the hold is removed, an earlier
-// creator's done does not idle what a hold keeps, and MarkActive's activity
-// keeps it ACTIVE (only a backstop's idle Observe ends that).
+// TestHoldsAreInUse: a hold keeps an item in use like a mark, and RemoveHold
+// only removes it and stamps the time; a creator's done leaves what a hold
+// keeps in use; MarkActive's pulse keeps it in use for the mark bound; an
+// idle Observe never removes a live mark.
 func TestHoldsAreInUse(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	if err := e.c.AddHold(ctx, tool, lifecycle.ScopeGlobal, "spawn"); err != nil {
 		t.Fatal(err)
 	}
-	if it, _ := e.read(lifecycle.ScopeGlobal); it.State != lifecycle.StateActive || len(it.Marks) != 0 || len(it.Holds) != 1 {
+	it, _ := e.read(lifecycle.ScopeGlobal)
+	if it.State != lifecycle.StateActive || len(it.Marks) != 0 || len(it.Holds) != 1 || !lifecycle.InUse(it, e.clock(), bound) {
 		t.Fatalf("after AddHold: %+v", it)
 	}
 	e.advance(time.Minute)
 	if err := e.c.RemoveHold(ctx, tool, lifecycle.ScopeGlobal, "spawn"); err != nil {
 		t.Fatal(err)
 	}
-	if it, _ := e.read(lifecycle.ScopeGlobal); it.State != lifecycle.StateIdle || !it.IdleSince.Equal(t0.Add(time.Minute)) {
+	it, _ = e.read(lifecycle.ScopeGlobal)
+	if it.State != lifecycle.StateActive || len(it.Holds) != 0 || lifecycle.InUse(it, e.clock(), bound) ||
+		!lifecycle.IdleSince(it, e.clock(), bound).Equal(t0.Add(time.Minute)) {
 		t.Errorf("a hold-only item after RemoveHold: %+v", it)
 	}
-	// A creator, then a hold: the creator's done leaves the hold's ACTIVE.
+	// A creator, then a hold: the creator's done leaves the hold in use.
 	ta, _ := e.c.Mark(ctx, tool, region)
 	if err := e.c.AddHold(ctx, tool, region, "spawn"); err != nil {
 		t.Fatal(err)
 	}
-	if done, _ := e.c.MarkDone(ctx, tool, region, ta); done {
-		t.Error("a done idled what a hold keeps")
+	if done, _ := e.c.MarkDone(ctx, tool, region, ta); !done {
+		t.Error("done")
 	}
-	if it, _ := e.read(region); it.State != lifecycle.StateActive {
+	if it, _ := e.read(region); !lifecycle.InUse(it, e.clock(), bound) {
 		t.Errorf("held: %+v", it)
 	}
 	if err := e.c.RemoveHold(ctx, tool, region, "spawn"); err != nil {
 		t.Fatal(err)
 	}
-	if it, _ := e.read(region); it.State != lifecycle.StateIdle {
+	if it, _ := e.read(region); lifecycle.InUse(it, e.clock(), bound) {
 		t.Errorf("after the hold: %+v", it)
 	}
-	// MarkActive's activity: RemoveHold leaves it ACTIVE.
+	// MarkActive's pulse: in use for the bound, then idle from its end.
 	if err := e.c.MarkActive(ctx, tool, region); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.c.AddHold(ctx, tool, region, "spawn"); err != nil {
-		t.Fatal(err)
+	pulse := e.clock()
+	if it, _ := e.read(region); !lifecycle.InUse(it, e.clock(), bound) || !it.PulseAt.Equal(pulse) {
+		t.Errorf("MarkActive's pulse: %+v", it)
 	}
-	if err := e.c.RemoveHold(ctx, tool, region, "spawn"); err != nil {
-		t.Fatal(err)
+	e.advance(bound)
+	if it, _ := e.read(region); lifecycle.InUse(it, e.clock(), bound) || !lifecycle.IdleSince(it, e.clock(), bound).Equal(pulse.Add(bound)) {
+		t.Errorf("a pulse past the bound: %+v", it)
 	}
-	it, _ := e.read(region)
-	if it.State != lifecycle.StateActive || len(it.Marks) != 1 || it.Marks[0].Token != "*" || !it.Marks[0].At.Equal(it.ActiveAt) {
-		t.Errorf("MarkActive's activity after RemoveHold: %+v", it)
-	}
-	// A backstop's idle Observe clears every mark.
+	// An idle Observe leaves a live mark (and the item) alone, and removes
+	// one older than the bound with the rest.
+	tok, _ := e.client("creator").Mark(ctx, tool, region)
 	if _, _, err := e.c.Observe(ctx, tool, region, false); err != nil {
 		t.Fatal(err)
 	}
-	if it, _ := e.read(region); it.State != lifecycle.StateIdle || len(it.Marks) != 0 {
-		t.Errorf("after an idle observe: %+v", it)
+	if it, _ := e.read(region); it.State != lifecycle.StateActive || len(it.Marks) != 1 || it.Marks[0].Token != tok {
+		t.Errorf("an idle observe with a creator running: %+v", it)
+	}
+	e.advance(bound)
+	if _, _, err := e.c.Observe(ctx, tool, region, false); err != nil {
+		t.Fatal(err)
+	}
+	if it, _ := e.read(region); it.State != lifecycle.StateIdle || len(it.Marks) != 0 || it.StampState != lifecycle.StateIdle {
+		t.Errorf("an idle observe past the bound: %+v", it)
 	}
 	// Removing a hold from a gone item or table succeeds.
 	if err := newEnv(t).c.RemoveHold(ctx, tool, region, "spawn"); err != nil {
@@ -335,7 +353,7 @@ func TestRetries(t *testing.T) {
 				}
 				return nil
 			}
-			if _, err := e3.c.MarkDone(ctx, tool, region, tok); err == nil {
+			if _, err := e3.c.MarkDone(ctx, tool, region, tok); failure == throttle && err == nil {
 				t.Error("MarkDone never gives up")
 			}
 			if _, err := e3.c.SetIdleIfUnchanged(ctx, tool, region, lifecycle.Expect{Exists: true}); err == nil || errors.Is(err, lifecycle.ErrChanged) {
@@ -343,28 +361,17 @@ func TestRetries(t *testing.T) {
 			}
 		})
 	}
-	// The idle step alone failing for good.
+	// A write that fails for good is an error.
 	e := newEnv(t)
 	tok, _ := e.c.Mark(ctx, tool, region)
 	e.fakes[region].Err = func(op string, _ any) error {
-		if op == "TransactWriteItems" {
-			return conflict
-		}
-		return nil
-	}
-	if _, err := e.c.MarkDone(ctx, tool, region, tok); err == nil || !strings.Contains(err.Error(), "conflict") {
-		t.Errorf("idle step conflicting: %v", err)
-	}
-	e.fakes[region].Err = nil
-	tok, _ = e.client("x").Mark(ctx, tool, region)
-	e.fakes[region].Err = func(op string, _ any) error {
-		if op == "TransactWriteItems" {
+		if op == "UpdateItem" {
 			return errors.New("network down")
 		}
 		return nil
 	}
 	if _, err := e.c.MarkDone(ctx, tool, region, tok); err == nil {
-		t.Error("idle step failing")
+		t.Error("a failing done")
 	}
 }
 
@@ -392,6 +399,18 @@ func TestClaimIfUnchanged(t *testing.T) {
 	}
 	if done, _ := creator.MarkDone(ctx, tool, lifecycle.ScopeGlobal, tok); !done {
 		t.Fatal("done")
+	}
+	// The done left it ACTIVE: judged idle, it is set IDLE as judged, then
+	// claimed with no grace (the reader's IdleSince is the grace).
+	judged, ok = e.read(lifecycle.ScopeGlobal)
+	if _, err := e.c.ClaimIfUnchanged(ctx, tool, lifecycle.ScopeGlobal, 0, lifecycle.ExpectOf(judged, ok)); !errors.Is(err, lifecycle.ErrNotClaimable) {
+		t.Errorf("an ACTIVE item: %v", err)
+	}
+	if lifecycle.InUse(judged, e.clock(), bound) {
+		t.Fatalf("judged in use: %+v", judged)
+	}
+	if _, err := e.c.SetIdleIfUnchanged(ctx, tool, lifecycle.ScopeGlobal, lifecycle.ExpectOf(judged, ok)); err != nil {
+		t.Fatal(err)
 	}
 	judged, ok = e.read(lifecycle.ScopeGlobal)
 	l, err := e.c.ClaimIfUnchanged(ctx, tool, lifecycle.ScopeGlobal, 0, lifecycle.ExpectOf(judged, ok))
@@ -621,12 +640,13 @@ func TestConditionalEdges(t *testing.T) {
 	if _, err := e6.c.LockIfUnchanged(ctx, tool, region, lifecycle.Expect{Exists: true}); err == nil {
 		t.Error("Lock with no randomness")
 	}
-	// A done while the table closes.
+	// A done while the table closes removes the mark, as RemoveHold
+	// removes a hold: ending activity is always allowed (finding 8).
 	e7 := newEnv(t)
 	tok, _ := e7.c.Mark(ctx, tool, region)
 	putSentinel(t, e7, t0)
-	if _, err := e7.c.MarkDone(ctx, tool, region, tok); !errors.Is(err, lifecycle.ErrTableClosing) {
-		t.Errorf("closing: %v", err)
+	if done, err := e7.c.MarkDone(ctx, tool, region, tok); !done || err != nil {
+		t.Errorf("closing: %v %v", done, err)
 	}
 	_ = tokens
 }
@@ -635,23 +655,13 @@ type failingReader struct{}
 
 func (failingReader) Read([]byte) (int, error) { return 0, errors.New("no entropy") }
 
-// TestRemoveHoldIdleFails: the hold goes; an idle step that fails is an
-// error, one that meets a closing table is not; a mark stored without a time
-// decodes with none.
+// TestRemoveHoldIdleFails: a failing write is an error; one on a closing
+// table is not; a mark stored without a time decodes with none.
 func TestRemoveHoldIdleFails(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	if err := e.c.AddHold(ctx, tool, region, "spawn"); err != nil {
 		t.Fatal(err)
-	}
-	e.fakes[region].Err = func(op string, _ any) error {
-		if op == "TransactWriteItems" {
-			return errors.New("network down")
-		}
-		return nil
-	}
-	if err := e.c.RemoveHold(ctx, tool, region, "spawn"); err == nil {
-		t.Error("a failing idle step")
 	}
 	e.fakes[region].Err = func(op string, _ any) error {
 		if op == "UpdateItem" {
@@ -669,6 +679,9 @@ func TestRemoveHoldIdleFails(t *testing.T) {
 	putSentinel(t, e2, t0)
 	if err := e2.c.RemoveHold(ctx, tool, region, "spawn"); err != nil {
 		t.Errorf("closing: %v", err)
+	}
+	if it, _ := e2.read(region); len(it.Holds) != 0 {
+		t.Errorf("closing left the hold: %+v", it)
 	}
 	e3 := newEnv(t)
 	if err := e3.c.MarkActive(ctx, tool, region); err != nil {

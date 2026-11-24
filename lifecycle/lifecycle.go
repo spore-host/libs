@@ -16,12 +16,19 @@
 //	state      ACTIVE | IDLE | TEARDOWN
 //	epoch      number, +1 on every MarkActive and AddHold
 //	idleSince  RFC 3339; set by the first idle Observe, removed by any activity
-//	lease      {token, owner, heartbeat, step}: the teardown claim
+//	lease      {token, owner, client, heartbeat, step}: the teardown claim
 //	holds      string set: tools that depend on this one in this scope
-//	marks      string set: one per running creator (Mark, until MarkDone), "*" for MarkActive
+//	marks      string set: "token|time", one per running creator (Mark, until MarkDone)
 //	activeAt   RFC 3339; the last activation
+//	pulseAt    RFC 3339; the last MarkActive
+//	lastActivityAt  RFC 3339; the last mark, hold, MarkActive, active Observe or Release, added or removed
+//	stampState, stampEpoch  the state and epoch this package's last state write left
 //	incomplete bool: a teardown suspended partway (Lease.Suspend)
 //	tool, scope  the item's own tool and scope, for readability
+//
+// Writers only add and remove what keeps an item in use, and stamp when;
+// none sets an item IDLE as a side effect. Readers judge with InUse and
+// IdleSince, which for them are authoritative over the state field.
 //
 // The sentinel, pk "table#closing", exists only while CloseTableIfEmpty is
 // deleting the table.
@@ -104,6 +111,7 @@ const (
 	DefaultWaitTimeout       = 10 * time.Minute
 	DefaultStaleAfter        = 20 * time.Minute
 	DefaultTablePollInterval = 2 * time.Second
+	DefaultMarkBound         = time.Hour
 )
 
 // State is a tool item's state.
@@ -171,6 +179,11 @@ type Options struct {
 	// TablePollInterval is how often a caller waiting for the table to become
 	// ACTIVE, or to finish deleting, checks again. Default 2 s.
 	TablePollInterval time.Duration
+
+	// MarkBound is how long an idle Observe takes a creator mark for a
+	// creator still running; an older one is a creator that died. Readers
+	// pass their own bound to InUse and IdleSince. Default 1 h.
+	MarkBound time.Duration
 }
 
 // Client is the lease protocol over the lifecycle tables. It is safe for
@@ -179,6 +192,10 @@ type Client struct {
 	o       Options
 	mu      sync.Mutex
 	clients map[string]API
+	// id is this Client's own random id (clientID), written with every
+	// lease it takes, so AdoptLease never takes another Client's lease for
+	// its own. Empty until its first lease.
+	id string
 }
 
 // New returns a Client.
@@ -209,6 +226,9 @@ func New(o Options) (*Client, error) {
 	}
 	if o.TablePollInterval <= 0 {
 		o.TablePollInterval = DefaultTablePollInterval
+	}
+	if o.MarkBound <= 0 {
+		o.MarkBound = DefaultMarkBound
 	}
 	return &Client{o: o, clients: map[string]API{}}, nil
 }
@@ -296,6 +316,20 @@ func (c *Client) staleBefore(now time.Time) string { return formatTime(now.Add(-
 
 func (c *Client) isStale(heartbeat time.Time, now time.Time) bool {
 	return heartbeat.IsZero() || formatTime(heartbeat) < c.staleBefore(now)
+}
+
+// clientID is this Client's own random id, made with its first lease.
+func (c *Client) clientID() (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.id == "" {
+		id, err := c.newToken()
+		if err != nil {
+			return "", err
+		}
+		c.id = id
+	}
+	return c.id, nil
 }
 
 func (c *Client) newToken() (string, error) {

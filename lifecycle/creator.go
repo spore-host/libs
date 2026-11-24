@@ -2,8 +2,8 @@ package lifecycle
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -30,7 +30,8 @@ import (
 // resources: one that claims later must first see the tool idle for its
 // grace period, and one that held a lease before has lost it.
 func (c *Client) MarkActive(ctx context.Context, tool tags.Tool, scope string) error {
-	return c.activate(ctx, tool, scope, "", "")
+	_, err := c.activate(ctx, tool, scope, "", "")
+	return err
 }
 
 // AddHold records that holder depends on tool's resources in scope (for
@@ -41,7 +42,8 @@ func (c *Client) AddHold(ctx context.Context, tool tags.Tool, scope string, hold
 	if err := validate(holder, scope); err != nil {
 		return err
 	}
-	return c.activate(ctx, tool, scope, holder, "")
+	_, err := c.activate(ctx, tool, scope, holder, "")
+	return err
 }
 
 // RemoveHold removes holder's hold on tool in scope. Removing a hold that does
@@ -54,26 +56,21 @@ func (c *Client) RemoveHold(ctx context.Context, tool tags.Tool, scope string, h
 	if err != nil {
 		return err
 	}
+	// Only the hold goes, and the time of the change: whether the item is
+	// still in use is the reader's to judge (InUse), so nothing is left
+	// stuck ACTIVE by a second write that did not happen.
 	_, err = a.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 		TableName:                 aws.String(TableName),
 		Key:                       keyOf(key),
-		UpdateExpression:          aws.String("DELETE #holds :holder"),
+		UpdateExpression:          aws.String("SET #lastActivityAt = :now DELETE #holds :holder"),
 		ConditionExpression:       aws.String("attribute_exists(#pk)"),
-		ExpressionAttributeNames:  names(attrHolds, attrPK),
-		ExpressionAttributeValues: map[string]types.AttributeValue{":holder": ss(string(holder))},
+		ExpressionAttributeNames:  names(attrHolds, attrPK, attrLastActive),
+		ExpressionAttributeValues: map[string]types.AttributeValue{":holder": ss(string(holder)), ":now": s(formatTime(c.now()))},
 	})
-	if isCCF(err) || isNotFound(err) {
+	if err == nil || isCCF(err) || isNotFound(err) {
 		return nil
 	}
-	if err != nil {
-		return fmt.Errorf("lifecycle: remove hold %s on %s: %w", holder, key, err)
-	}
-	// The last thing in use gone (no hold, no mark): idle from now. A table
-	// that is closing has no tool item left to idle.
-	if _, err := c.idleIfFree(ctx, a, key); err != nil && !errors.Is(err, ErrTableClosing) {
-		return fmt.Errorf("lifecycle: remove hold %s on %s: %w", holder, key, err)
-	}
-	return nil
+	return fmt.Errorf("lifecycle: remove hold %s on %s: %w", holder, key, err)
 }
 
 // blocked is why one activation attempt could not commit.
@@ -83,37 +80,45 @@ type blocked struct {
 	sentinel time.Time // the sentinel's since, when what == "sentinel"
 }
 
-func (c *Client) activate(ctx context.Context, tool tags.Tool, scope string, holder tags.Tool, mark string) error {
+// activate runs the activation. mark, when set, is a creator mark's token;
+// the element written (token|time, stamped at commit) is returned, the last
+// one tried on an error.
+func (c *Client) activate(ctx context.Context, tool tags.Tool, scope string, holder tags.Tool, mark string) (string, error) {
 	a, region, key, err := c.target(tool, scope)
 	if err != nil {
-		return err
+		return "", err
 	}
+	element := ""
 	start := c.now()
 	missing, polls := 0, 0
 	for {
-		b, err := c.activateOnce(ctx, a, key, tool, scope, holder, mark)
+		now := c.now()
+		if mark != "" {
+			element = markElement(mark, now)
+		}
+		b, err := c.activateOnce(ctx, a, key, tool, scope, holder, element, now)
 		switch {
 		case err == nil && b == nil:
-			return nil
+			return element, nil
 		case isNotFound(err):
 			// No table (or one mid-transition): make sure it exists, then
 			// try again. A table that keeps vanishing is waited for like any
 			// other blocker.
 			if err := c.ensureTable(ctx, a, region, tool, scope, start); err != nil {
-				return err
+				return element, err
 			}
 			if missing++; missing < 3 {
 				continue
 			}
 			b = &blocked{what: "table"}
 		case err != nil:
-			return fmt.Errorf("lifecycle: mark %s active: %w", key, err)
+			return element, fmt.Errorf("lifecycle: mark %s active: %w", key, err)
 		}
 		missing = 0
-		now := c.now()
+		now = c.now()
 		if b.what == "sentinel" && !b.sentinel.IsZero() && c.isStale(b.sentinel, now) {
 			if err := c.clearStaleSentinel(ctx, a, now); err != nil {
-				return err
+				return element, err
 			}
 			continue
 		}
@@ -126,11 +131,11 @@ func (c *Client) activate(ctx context.Context, tool tags.Tool, scope string, hol
 					we.Owner, we.Heartbeat = l.Owner, l.Heartbeat
 				}
 			}
-			return we
+			return element, we
 		}
 		polls++
 		if err := c.o.Sleep(ctx, c.o.PollInterval); err != nil {
-			return err
+			return element, err
 		}
 	}
 }
@@ -138,10 +143,8 @@ func (c *Client) activate(ctx context.Context, tool tags.Tool, scope string, hol
 // activateOnce runs the activation transaction once. It returns a non-nil
 // *blocked when the transaction was cancelled by the sentinel, a live lease,
 // or a conflicting transaction.
-func (c *Client) activateOnce(ctx context.Context, a API, key string, tool tags.Tool, scope string, holder tags.Tool, mark string) (*blocked, error) {
-	now := c.now()
-	upd := "SET #state = :active, #epoch = if_not_exists(#epoch, :zero) + :one, #tool = :tool, #scope = :scope, #activeAt = :now REMOVE #idleSince, #lease, #incomplete"
-	nm := names(attrState, attrEpoch, attrTool, attrScope, attrIdleSince, attrLease, attrHeartbeat, attrIncomplete, attrActiveAt)
+func (c *Client) activateOnce(ctx context.Context, a API, key string, tool tags.Tool, scope string, holder tags.Tool, mark string, now time.Time) (*blocked, error) {
+	nm := names(attrState, attrEpoch, attrTool, attrScope, attrIdleSince, attrLease, attrHeartbeat, attrIncomplete, attrActiveAt, attrLastActive)
 	vals := map[string]types.AttributeValue{
 		":active": s(string(StateActive)),
 		":zero":   n(0),
@@ -150,13 +153,17 @@ func (c *Client) activateOnce(ctx context.Context, a API, key string, tool tags.
 		":scope":  s(scope),
 		":stale":  s(c.staleBefore(now)),
 	}
+	upd := "SET #state = :active, #epoch = if_not_exists(#epoch, :zero) + :one, #tool = :tool, #scope = :scope, #activeAt = :now, " +
+		"#lastActivityAt = :now" + stamp(StateActive, true, nm, vals) + " REMOVE #idleSince, #lease, #incomplete"
 	vals[":now"] = s(formatTime(now))
 	switch {
 	case holder != "":
-		// A hold is its own "in use": no mark (RemoveHold ends it).
+		// A hold is its own "in use" (RemoveHold ends it).
 	case mark == "":
-		mark = anyActivity // MarkActive: activity a backstop judges
-		fallthrough
+		// MarkActive: activity with no end of its own, in use for the
+		// reader's mark bound.
+		upd = strings.Replace(upd, " REMOVE ", ", #pulseAt = :now REMOVE ", 1)
+		nm["#pulseAt"] = attrPulseAt
 	default:
 		upd += " ADD #marks :mark"
 		nm["#marks"] = attrMarks

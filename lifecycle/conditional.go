@@ -23,18 +23,21 @@ import (
 // never sees that a creator arrived. These write only if the item is still
 // exactly what the caller read (Expect).
 //
-// And "in use" with an end. An item is in use while any creator's mark
-// (Mark, until its MarkDone) or any hold (AddHold, until RemoveHold) is on
-// it: the marks are a set, one per running creator. The last MarkDone or
-// RemoveHold, with no mark and no hold left, sets it IDLE, idle from then. A
-// scope no backstop observes (the global scope) is therefore ACTIVE exactly
-// while something uses it. MarkActive adds the mark "*": activity that no
-// creator ends, only a backstop's idle Observe (which, seeing every signal,
-// clears every mark).
+// And "in use" a reader can judge. Writers only add or remove what keeps an
+// item in use (a creator's mark, Mark until its MarkDone; a hold, AddHold
+// until RemoveHold; a pulse, MarkActive) and stamp when they did (and an
+// active Observe or a Release stamps the time too); none of them ever sets an item IDLE. Whether an
+// item is in use, and since when it has been idle, is the reader's to judge,
+// from those times (InUse, IdleSince): an item a writer could not finish
+// with ages out by itself.
 
 // ErrChanged is what a conditional write returns when the item is no longer
 // what the caller read.
 var ErrChanged = errors.New("lifecycle: the item changed since it was read")
+
+// ErrApplied wraps the error of a read after a conditional write that was
+// applied: the write stands; only its result could not be read.
+var ErrApplied = errors.New("lifecycle: the write was applied")
 
 // Expect is an item as a caller judged it.
 type Expect struct {
@@ -46,6 +49,9 @@ type Expect struct {
 	LeaseToken string
 	// Marks are the creator marks' tokens, sorted; none for no mark.
 	Marks []string
+	// LastActivity is the item's LastActivityAt: any activity stamped since
+	// (an active Observe, a Release) is a change too.
+	LastActivity time.Time
 }
 
 // ExpectOf is the Expect of an item read with Get.
@@ -61,6 +67,7 @@ func ExpectOf(it Item, exists bool) Expect {
 		e.Marks = append(e.Marks, m.Token)
 	}
 	sort.Strings(e.Marks)
+	e.LastActivity = it.LastActivityAt
 	return e
 }
 
@@ -68,7 +75,7 @@ func ExpectOf(it Item, exists bool) Expect {
 func (e Expect) matches(it Item, exists bool) bool {
 	x := ExpectOf(it, exists)
 	return x.Exists == e.Exists && x.Epoch == e.Epoch && x.State == e.State && x.LeaseToken == e.LeaseToken &&
-		strings.Join(x.Marks, "\x00") == strings.Join(e.Marks, "\x00")
+		strings.Join(x.Marks, "\x00") == strings.Join(e.Marks, "\x00") && x.LastActivity.Equal(e.LastActivity)
 }
 
 // cond is e as a condition expression, with its names and values added.
@@ -93,6 +100,13 @@ func (e Expect) cond(nm map[string]string, vals map[string]types.AttributeValue)
 		vals[":xmarks"] = &types.AttributeValueMemberSS{Value: append([]string(nil), e.Marks...)}
 		c += " AND #marks = :xmarks"
 	}
+	nm["#lastActivityAt"] = attrLastActive
+	if e.LastActivity.IsZero() {
+		c += " AND attribute_not_exists(#lastActivityAt)"
+	} else {
+		vals[":xlast"] = s(formatTime(e.LastActivity))
+		c += " AND #lastActivityAt = :xlast"
+	}
 	return c
 }
 
@@ -116,25 +130,26 @@ const writeAttempts = 4
 // again waits a poll interval before the next attempt.
 func (c *Client) again(ctx context.Context) error { return c.o.Sleep(ctx, c.o.PollInterval) }
 
-// Mark is MarkActive, returning the token of the creator mark it added, for
-// MarkDone. The item stays ACTIVE until every mark is done and no hold is
-// left. The token carries the mark's time (MarkInfo.At).
+// Mark records that a creator is running in scope: it adds a creator mark
+// (its token and the time it was committed) to the item's marks, as
+// MarkActive activates it, and returns the token for MarkDone. A mark keeps
+// the item in use (InUse) until MarkDone removes it, or until it is older
+// than the reader's mark bound (a creator that died). On an error the token
+// is returned too: a mark that was committed though its answer was lost can
+// be ended with it, and ages out if it is not.
 func (c *Client) Mark(ctx context.Context, tool tags.Tool, scope string) (string, error) {
 	token, err := c.newToken()
 	if err != nil {
 		return "", err
 	}
-	token = markElement(token, c.now())
-	if err := c.activate(ctx, tool, scope, "", token); err != nil {
-		return "", err
-	}
-	return token, nil
+	return c.activate(ctx, tool, scope, "", token)
 }
 
-// MarkDone removes the creator mark token, and, if no mark and no hold is
-// left, sets the item IDLE (idleSince now). It reports whether it set the
-// item idle: false (with a nil error) while another creator's mark or a hold
-// keeps it in use, or when the mark or the item is gone. A throttle or a
+// MarkDone removes the creator mark token, and stamps the item's
+// LastActivityAt. It never changes the item's state: whether the item is
+// still in use, and since when it is idle, is the reader's to judge
+// (InUse, IdleSince). It reports whether it removed the mark: false (with a
+// nil error) when the mark or the item is gone already. A throttle or a
 // conflicting transaction is tried again.
 func (c *Client) MarkDone(ctx context.Context, tool tags.Tool, scope, token string) (bool, error) {
 	a, _, key, err := c.target(tool, scope)
@@ -145,10 +160,10 @@ func (c *Client) MarkDone(ctx context.Context, tool tags.Tool, scope, token stri
 		_, err = a.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 			TableName:                 aws.String(TableName),
 			Key:                       keyOf(key),
-			UpdateExpression:          aws.String("DELETE #marks :mark"),
+			UpdateExpression:          aws.String("SET #lastActivityAt = :now DELETE #marks :mark"),
 			ConditionExpression:       aws.String("contains(#marks, :one)"),
-			ExpressionAttributeNames:  names(attrMarks),
-			ExpressionAttributeValues: map[string]types.AttributeValue{":mark": ss(token), ":one": s(token)},
+			ExpressionAttributeNames:  names(attrMarks, attrLastActive),
+			ExpressionAttributeValues: map[string]types.AttributeValue{":mark": ss(token), ":one": s(token), ":now": s(formatTime(c.now()))},
 		})
 		if err == nil || isCCF(err) || isNotFound(err) || !retryable(err) || attempt == writeAttempts {
 			break
@@ -163,55 +178,7 @@ func (c *Client) MarkDone(ctx context.Context, tool tags.Tool, scope, token stri
 	case err != nil:
 		return false, fmt.Errorf("lifecycle: end mark on %s: %w", key, err)
 	}
-	return c.idleIfFree(ctx, a, key)
-}
-
-// idleIfFree sets the item IDLE (idleSince now) if it is ACTIVE with no
-// mark, no hold and no live lease, in one transaction that checks the closing
-// sentinel. It reports whether it did. A throttle or conflict is tried again.
-func (c *Client) idleIfFree(ctx context.Context, a API, key string) (bool, error) {
-	for attempt := 1; ; attempt++ {
-		now := c.now()
-		nm := names(attrState, attrIdleSince, attrMarks, attrHolds, attrLease, attrHeartbeat)
-		vals := map[string]types.AttributeValue{
-			":idle": s(string(StateIdle)), ":active": s(string(StateActive)),
-			":now": s(formatTime(now)), ":stale": s(c.staleBefore(now)),
-		}
-		_, err := a.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{TransactItems: []types.TransactWriteItem{
-			sentinelAbsent(),
-			{Update: &types.Update{
-				TableName:        aws.String(TableName),
-				Key:              keyOf(key),
-				UpdateExpression: aws.String("SET #state = :idle, #idleSince = :now"),
-				ConditionExpression: aws.String("#state = :active AND attribute_not_exists(#marks) AND attribute_not_exists(#holds) AND " +
-					noLiveLease),
-				ExpressionAttributeNames:            nm,
-				ExpressionAttributeValues:           vals,
-				ReturnValuesOnConditionCheckFailure: types.ReturnValuesOnConditionCheckFailureAllOld,
-			}},
-		}})
-		if err == nil {
-			return true, nil
-		}
-		if isNotFound(err) {
-			return false, nil
-		}
-		b, cerr := classifyCancel(err)
-		switch {
-		case cerr != nil && (!retryable(cerr) || attempt == writeAttempts):
-			return false, fmt.Errorf("lifecycle: set %s idle: %w", key, cerr)
-		case cerr != nil:
-		case b.what == "sentinel":
-			return false, ErrTableClosing
-		case b.what == "lease":
-			return false, nil // still in use, or claimed
-		case attempt == writeAttempts:
-			return false, fmt.Errorf("lifecycle: set %s idle: transaction conflict", key)
-		}
-		if err := c.again(ctx); err != nil {
-			return false, err
-		}
-	}
+	return true, nil
 }
 
 // SetIdleIfUnchanged records tool idle in scope, as the caller judged it: if
@@ -236,13 +203,14 @@ func (c *Client) SetIdleIfUnchanged(ctx context.Context, tool tags.Tool, scope s
 		vals := map[string]types.AttributeValue{":idle": s(string(StateIdle)), ":now": s(formatTime(now)),
 			":tool": s(string(tool)), ":scope": s(scope), ":stale": s(c.staleBefore(now))}
 		cond := e.cond(nm, vals) + " AND attribute_not_exists(#holds) AND " + noLiveLease
+		upStamp := stamp(StateIdle, false, nm, vals)
 		_, err := a.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{TransactItems: []types.TransactWriteItem{
 			sentinelAbsent(),
 			{Update: &types.Update{
 				TableName: aws.String(TableName),
 				Key:       keyOf(key),
 				UpdateExpression: aws.String("SET #state = :idle, #idleSince = if_not_exists(#idleSince, :now), #tool = :tool, " +
-					"#scope = :scope REMOVE #marks, #lease"),
+					"#scope = :scope" + upStamp + " REMOVE #marks, #lease"),
 				ConditionExpression:                 aws.String(cond),
 				ExpressionAttributeNames:            nm,
 				ExpressionAttributeValues:           vals,
@@ -251,7 +219,10 @@ func (c *Client) SetIdleIfUnchanged(ctx context.Context, tool tags.Tool, scope s
 		}})
 		if err == nil {
 			it, _, err := c.get(ctx, a, key)
-			return it, err
+			if err != nil {
+				return Item{}, fmt.Errorf("lifecycle: set %s idle: %w; reading it back: %v", key, ErrApplied, err)
+			}
+			return it, nil
 		}
 		if isNotFound(err) {
 			if e.Exists {
@@ -284,9 +255,10 @@ func (c *Client) SetIdleIfUnchanged(ctx context.Context, tool tags.Tool, scope s
 }
 
 // ClaimIfUnchanged takes the teardown lease as Claim does, but only if the
-// item is still exactly e: an IDLE item idle for at least grace, or a
-// TEARDOWN one whose lease (e.LeaseToken) has gone stale, which it takes
-// over. No hold may exist. Any difference (a creator marked, a hold, another
+// item is still exactly e: an IDLE item idle for at least grace (with no
+// lease, or a stale one, which it takes over), or a TEARDOWN one whose lease
+// (e.LeaseToken) has gone stale, which it takes over. A caller that judged
+// the item with IdleSince passes grace 0. No hold may exist. Any difference (a creator marked, a hold, another
 // claim) refuses it with a *NotClaimableError ("changed since it was
 // judged").
 func (c *Client) ClaimIfUnchanged(ctx context.Context, tool tags.Tool, scope string, grace time.Duration, e Expect) (*Lease, error) {
@@ -314,7 +286,9 @@ func (c *Client) ClaimIfUnchanged(ctx context.Context, tool tags.Tool, scope str
 	now := c.now()
 	switch {
 	case it.State == StateTeardown && it.Lease != nil && c.isStale(it.Lease.Heartbeat, now):
-	case it.State == StateIdle && it.Lease == nil && !it.IdleSince.IsZero():
+	case it.State == StateIdle && (it.Lease == nil || c.isStale(it.Lease.Heartbeat, now)) && !it.IdleSince.IsZero():
+		// IDLE, with no lease or one whose holder died (a lock): the grace
+		// is the item's, whoever held a lease on it.
 		if it.IdleFor(now) < grace {
 			return nil, refuse(fmt.Sprintf("idle for %s of %s", it.IdleFor(now).Round(time.Second), grace))
 		}
@@ -327,16 +301,20 @@ func (c *Client) ClaimIfUnchanged(ctx context.Context, tool tags.Tool, scope str
 	if err != nil {
 		return nil, err
 	}
+	id, err := c.clientID()
+	if err != nil {
+		return nil, err
+	}
 	nm := names(attrHolds, attrHeartbeat, attrIncomplete)
 	vals := map[string]types.AttributeValue{
 		":teardown": s(string(StateTeardown)),
 		":stale":    s(c.staleBefore(now)),
 		":lease": &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{
-			attrToken: s(token), attrOwner: s(c.o.Owner), attrHeartbeat: s(formatTime(now)), attrStep: s(""),
+			attrToken: s(token), attrOwner: s(c.o.Owner), attrClient: s(id), attrHeartbeat: s(formatTime(now)), attrStep: s(""),
 		}},
 	}
 	cond := e.cond(nm, vals) + " AND attribute_not_exists(#holds) AND " + noLiveLease
-	if e.State == StateIdle {
+	if e.State == StateIdle && grace > 0 {
 		nm["#idleSince"] = attrIdleSince
 		vals[":cutoff"] = s(formatTime(now.Add(-grace)))
 		cond += " AND #idleSince <= :cutoff"
@@ -344,7 +322,7 @@ func (c *Client) ClaimIfUnchanged(ctx context.Context, tool tags.Tool, scope str
 	_, err = a.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 		TableName:                 aws.String(TableName),
 		Key:                       keyOf(key),
-		UpdateExpression:          aws.String("SET #state = :teardown, #lease = :lease REMOVE #incomplete"),
+		UpdateExpression:          aws.String("SET #state = :teardown, #lease = :lease" + stamp(StateTeardown, false, nm, vals) + " REMOVE #incomplete"),
 		ConditionExpression:       aws.String(cond),
 		ExpressionAttributeNames:  nm,
 		ExpressionAttributeValues: vals,
@@ -378,12 +356,16 @@ func (c *Client) LockIfUnchanged(ctx context.Context, tool tags.Tool, scope stri
 	if err != nil {
 		return nil, err
 	}
+	id, err := c.clientID()
+	if err != nil {
+		return nil, err
+	}
 	now := c.now()
 	nm := names(attrHeartbeat)
 	vals := map[string]types.AttributeValue{
 		":stale": s(c.staleBefore(now)),
 		":lease": &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{
-			attrToken: s(token), attrOwner: s(c.o.Owner), attrHeartbeat: s(formatTime(now)), attrStep: s("lock"),
+			attrToken: s(token), attrOwner: s(c.o.Owner), attrClient: s(id), attrHeartbeat: s(formatTime(now)), attrStep: s("lock"),
 		}},
 	}
 	cond := e.cond(nm, vals) + " AND " + noLiveLease
@@ -420,11 +402,12 @@ func (l *Lease) Unlock(ctx context.Context) error {
 	}, true)
 }
 
-// AdoptLease returns the live lease on tool in scope held in this Client's
-// owner name: a claim whose answer was lost (a dropped connection after the
-// write applied) leaves one the caller cannot otherwise end. Give it back
-// with Release, Suspend or Unlock. ErrLeaseLost when there is no such lease.
-// Owner names must be unique to a run for this to be safe.
+// AdoptLease returns the live lease on tool in scope that this very Client
+// took (its owner name and its own random id both match): a claim whose
+// answer was lost (a dropped connection after the write applied) leaves one
+// the caller cannot otherwise end. Give it back with Release, Suspend or
+// Unlock. ErrLeaseLost when there is no such lease. A Client with no owner
+// set ("unknown") adopts nothing.
 func (c *Client) AdoptLease(ctx context.Context, tool tags.Tool, scope string) (*Lease, error) {
 	a, _, key, err := c.target(tool, scope)
 	if err != nil {
@@ -434,10 +417,23 @@ func (c *Client) AdoptLease(ctx context.Context, tool tags.Tool, scope string) (
 	if err != nil {
 		return nil, fmt.Errorf("lifecycle: read %s: %w", key, err)
 	}
-	if !exists || it.Lease == nil || it.Lease.Owner != c.o.Owner || c.isStale(it.Lease.Heartbeat, c.now()) {
+	if c.o.Owner == "" || c.o.Owner == "unknown" {
+		return nil, fmt.Errorf("lifecycle: a client with no owner adopts no lease: %w", ErrLeaseLost)
+	}
+	if !exists || it.Lease == nil || it.Lease.Owner != c.o.Owner || it.Lease.Client != c.adoptID() || c.isStale(it.Lease.Heartbeat, c.now()) {
 		return nil, fmt.Errorf("lifecycle: no live lease of %s on %s: %w", c.o.Owner, key, ErrLeaseLost)
 	}
 	return &Lease{c: c, a: a, key: key, tool: tool, scope: scope, token: it.Lease.Token}, nil
+}
+
+// adoptID is the Client's id, or one no lease carries before its first.
+func (c *Client) adoptID() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.id == "" {
+		return "\x00none"
+	}
+	return c.id
 }
 
 // Suspend gives the lease up after a teardown stopped partway: the item goes
@@ -453,7 +449,7 @@ func (l *Lease) Suspend(ctx context.Context) error {
 		_, err := l.a.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 			TableName:                 aws.String(TableName),
 			Key:                       keyOf(l.key),
-			UpdateExpression:          aws.String("SET #state = :idle, #idleSince = if_not_exists(#idleSince, :now), #incomplete = :true REMOVE #lease"),
+			UpdateExpression:          aws.String("SET #state = :idle, #idleSince = if_not_exists(#idleSince, :now), #incomplete = :true" + stamp(StateIdle, false, nm, vals) + " REMOVE #lease"),
 			ConditionExpression:       aws.String(cond),
 			ExpressionAttributeNames:  nm,
 			ExpressionAttributeValues: vals,

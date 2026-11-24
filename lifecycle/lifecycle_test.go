@@ -557,18 +557,16 @@ func TestObserveActiveClearsIdle(t *testing.T) {
 	if it.State != lifecycle.StateActive || !it.IdleSince.IsZero() || idle != 0 {
 		t.Errorf("active Observe = %+v, %s", it, idle)
 	}
-	// An unchanged active observation writes nothing.
-	before := e.fake().Calls("TransactWriteItems")
-	if _, _, err := e.c.Observe(ctx, tool, region, true); err != nil {
-		t.Fatal(err)
-	}
-	if e.fake().Calls("TransactWriteItems") != before {
-		t.Error("an unchanged active observation wrote")
+	// Every active observation stamps the time, so a reader's IdleSince
+	// counts from the last activity seen.
+	e.advance(time.Minute)
+	if it, _, err := e.c.Observe(ctx, tool, region, true); err != nil || !it.LastActivityAt.Equal(e.clock()) {
+		t.Errorf("a second active observation: %+v %v", it, err)
 	}
 	// Idle again: the grace clock starts over.
 	e.advance(time.Hour)
 	it, _, _ = e.c.Observe(ctx, tool, region, false)
-	if !it.IdleSince.Equal(t0.Add(2 * time.Hour)) {
+	if !it.IdleSince.Equal(t0.Add(2*time.Hour + time.Minute)) {
 		t.Errorf("idleSince after active then idle = %s, want a fresh one", it.IdleSince)
 	}
 }
