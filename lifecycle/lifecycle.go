@@ -200,6 +200,49 @@ type Client struct {
 	// lease it takes, so AdoptLease never takes another Client's lease for
 	// its own. Empty until its first lease.
 	id string
+	// marks are the stored elements of the creator marks this Client wrote
+	// (Mark, RefreshMark), by item key and token, so MarkDone and
+	// RefreshMark need no read (a CLI user's grant has no GetItem).
+	marks map[string][]string
+}
+
+func markKey(key, token string) string { return key + "\x00" + token }
+
+// knownMarks are the elements this Client wrote for token on key.
+func (c *Client) knownMarks(key, token string) []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.marks[markKey(key, token)]...)
+}
+
+// noteMarks records (or, with none, forgets) the elements of token on key.
+func (c *Client) noteMarks(key, token string, elems ...string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.marks == nil {
+		c.marks = map[string][]string{}
+	}
+	if len(elems) == 0 {
+		delete(c.marks, markKey(key, token))
+		return
+	}
+	c.marks[markKey(key, token)] = elems
+}
+
+// addMark records one more element of token on key.
+func (c *Client) addMark(key, token, elem string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.marks == nil {
+		c.marks = map[string][]string{}
+	}
+	k := markKey(key, token)
+	for _, e := range c.marks[k] {
+		if e == elem {
+			return
+		}
+	}
+	c.marks[k] = append(c.marks[k], elem)
 }
 
 // New returns a Client.

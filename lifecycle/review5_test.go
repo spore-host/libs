@@ -130,17 +130,44 @@ func TestReview5RefreshMark(t *testing.T) {
 	if err := l.Unlock(ctx); err != nil {
 		t.Fatal(err)
 	}
-	// A read that fails is an error.
+	// The Client that wrote the mark refreshes and ends it with no read (a
+	// CLI user's grant has no GetItem); any other reads it, and a read that
+	// fails is an error.
+	reads := e.fake().Calls("GetItem")
+	if done, err := e.c.RefreshMark(ctx, tool, region, tok2); !done || err != nil {
+		t.Errorf("unlocked: %v %v", done, err)
+	}
+	if done, err := e.c.MarkDone(ctx, tool, region, tok2); !done || err != nil {
+		t.Errorf("done: %v %v", done, err)
+	}
+	if n := e.fake().Calls("GetItem") - reads; n != 0 {
+		t.Errorf("%d reads by the mark's own Client", n)
+	}
+	tok3, _ := e.c.Mark(ctx, tool, region)
+	other := e.client("another client")
+	e.advance(time.Minute)
+	if done, err := other.RefreshMark(ctx, tool, region, tok3); !done || err != nil {
+		t.Errorf("another client's refresh: %v %v", done, err)
+	}
 	e.fake().Err = func(op string, _ any) error {
 		if op == "GetItem" {
 			return errors.New("network down")
 		}
 		return nil
 	}
-	if _, err := e.c.RefreshMark(ctx, tool, region, tok2); err == nil {
+	if _, err := e.client("a third").RefreshMark(ctx, tool, region, tok3); err == nil {
 		t.Error("a failed read")
 	}
+	if _, err := e.client("a fourth").MarkDone(ctx, tool, region, tok3); err == nil {
+		t.Error("a failed read (done)")
+	}
 	e.fake().Err = nil
+	if done, err := other.MarkDone(ctx, tool, region, tok3); !done || err != nil {
+		t.Errorf("another client's done: %v %v", done, err)
+	}
+	if it, _ := e.read(region); len(it.Marks) != 0 {
+		t.Errorf("left: %+v", it.Marks)
+	}
 }
 
 // TestReview5LastActivityOnlyAdvances (L3): a writer whose clock is behind

@@ -105,6 +105,7 @@ func (c *Client) activate(ctx context.Context, tool tags.Tool, scope string, hol
 		now := laterOf(c.now(), floor)
 		if mark != "" {
 			element = markElement(mark, now)
+			c.addMark(key, mark, element) // tried: it may commit though its answer is lost
 		}
 		b, err := c.activateOnce(ctx, a, key, tool, scope, holder, element, now)
 		switch {

@@ -152,53 +152,86 @@ func (c *Client) Mark(ctx context.Context, tool tags.Tool, scope string) (string
 // LastActivityAt. It never changes the item's state: whether the item is
 // still in use, and since when it is idle, is the reader's to judge
 // (InUse, IdleSince). It reports whether it removed the mark: false (with a
-// nil error) when the mark or the item is gone already. A throttle or a
-// conflicting write is tried again.
+// nil error) when the mark or the item is gone already. A throttle is tried
+// again. The Client that wrote the mark removes it with no read; any other
+// reads the item first.
 func (c *Client) MarkDone(ctx context.Context, tool tags.Tool, scope, token string) (bool, error) {
 	a, _, key, err := c.target(tool, scope)
 	if err != nil {
 		return false, err
 	}
+	elems, gone, err := c.markElemsOf(ctx, a, key, token)
+	if err != nil || gone {
+		return false, err
+	}
+	now := c.now()
 	for attempt := 1; ; attempt++ {
-		var done bool
-		done, err = c.markDoneOnce(ctx, a, key, token)
-		if err == nil || (!isCCF(err) && !retryable(err)) || attempt == writeAttempts {
-			if isNotFound(err) {
-				return false, nil
+		nm := names(attrMarks, attrLastActive, attrPK)
+		vals := map[string]types.AttributeValue{":mark": &types.AttributeValueMemberSS{Value: elems}, ":now": s(formatTime(now))}
+		_, err = a.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+			TableName:                           aws.String(TableName),
+			Key:                                 keyOf(key),
+			UpdateExpression:                    aws.String("SET #lastActivityAt = :now DELETE #marks :mark"),
+			ConditionExpression:                 aws.String("attribute_exists(#pk) AND " + containsAny(elems, vals) + " AND " + laCond),
+			ExpressionAttributeNames:            nm,
+			ExpressionAttributeValues:           vals,
+			ReturnValuesOnConditionCheckFailure: types.ReturnValuesOnConditionCheckFailureAllOld,
+		})
+		var cc *types.ConditionalCheckFailedException
+		switch {
+		case err == nil:
+			c.noteMarks(key, token)
+			return true, nil
+		case isNotFound(err):
+			c.noteMarks(key, token)
+			return false, nil
+		case errors.As(err, &cc):
+			if old := decodeItem(cc.Item); len(markElems(old, token)) == 0 {
+				c.noteMarks(key, token)
+				return false, nil // not on it (already done, or cleared by a backstop)
+			} else if la, newer := newerStamp(err, 0, now); newer && attempt < writeAttempts {
+				now = la // a later stamp: the end is stamped there
+				elems = markElems(old, token)
+				continue
 			}
-			if err != nil {
-				return false, fmt.Errorf("lifecycle: end mark on %s: %w", key, err)
-			}
-			return done, nil
-		}
-		if !isCCF(err) { // a throttle; a changed item is read again at once
+		case retryable(err) && attempt < writeAttempts:
 			if err := c.again(ctx); err != nil {
 				return false, err
 			}
+			continue
 		}
+		return false, fmt.Errorf("lifecycle: end mark on %s: %w", key, err)
 	}
 }
 
-// markDoneOnce removes token's marks as read, stamped no earlier than the
-// item's lastActivityAt (laCond). A CCF: the item changed since the read.
-func (c *Client) markDoneOnce(ctx context.Context, a API, key, token string) (bool, error) {
+// markElemsOf are token's stored mark elements on key: those this Client
+// wrote, or, for a mark it did not write, as read. gone: no such mark, or no
+// item or table.
+func (c *Client) markElemsOf(ctx context.Context, a API, key, token string) (elems []string, gone bool, err error) {
+	if elems = c.knownMarks(key, token); len(elems) > 0 {
+		return elems, false, nil
+	}
 	it, exists, err := c.get(ctx, a, key)
-	if err != nil {
-		return false, err
+	switch {
+	case isNotFound(err):
+		return nil, true, nil
+	case err != nil:
+		return nil, false, fmt.Errorf("lifecycle: read %s: %w", key, err)
 	}
-	elems := markElems(it, token)
-	if !exists || len(elems) == 0 {
-		return false, nil // not on it (already done, or cleared by a backstop)
+	elems = markElems(it, token)
+	return elems, !exists || len(elems) == 0, nil
+}
+
+// containsAny is the condition that the marks hold any of elems, with its
+// values added.
+func containsAny(elems []string, vals map[string]types.AttributeValue) string {
+	parts := make([]string, len(elems))
+	for i, e := range elems {
+		v := fmt.Sprintf(":e%d", i)
+		vals[v] = s(e)
+		parts[i] = "contains(#marks, " + v + ")"
 	}
-	_, err = a.UpdateItem(ctx, &dynamodb.UpdateItemInput{
-		TableName:                 aws.String(TableName),
-		Key:                       keyOf(key),
-		UpdateExpression:          aws.String("SET #lastActivityAt = :now DELETE #marks :mark"),
-		ConditionExpression:       aws.String("contains(#marks, :one) AND " + laCond),
-		ExpressionAttributeNames:  names(attrMarks, attrLastActive),
-		ExpressionAttributeValues: map[string]types.AttributeValue{":mark": &types.AttributeValueMemberSS{Value: elems}, ":one": s(elems[0]), ":now": s(formatTime(laterOf(c.now(), it.LastActivityAt)))},
-	})
-	return err == nil, err
+	return "(" + strings.Join(parts, " OR ") + ")"
 }
 
 // RefreshMark re-stamps the creator mark token with the time now, only if it
@@ -209,61 +242,57 @@ func (c *Client) markDoneOnce(ctx context.Context, a API, key, token string) (bo
 // gone (aged out and removed, or ended), or a teardown holds the item: the
 // creator should stop creating. A refresh is two writes (the new time added,
 // then the old removed); between them, or if the second fails, the mark has
-// both times, which is in use either way, and the older one ages out.
+// both times, which is in use either way, and the older one ages out. Like
+// MarkDone, the Client that wrote the mark needs no read.
 func (c *Client) RefreshMark(ctx context.Context, tool tags.Tool, scope, token string) (bool, error) {
 	a, _, key, err := c.target(tool, scope)
 	if err != nil {
 		return false, err
 	}
-	it, exists, err := c.get(ctx, a, key)
-	if isNotFound(err) {
-		return false, nil
+	old, gone, err := c.markElemsOf(ctx, a, key, token)
+	if err != nil || gone {
+		return false, err
 	}
-	if err != nil {
+	now := c.now()
+	elem := markElement(token, now)
+	vals := map[string]types.AttributeValue{":new": ss(elem), ":stale": s(c.staleBefore(now))}
+	_, err = a.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:                 aws.String(TableName),
+		Key:                       keyOf(key),
+		UpdateExpression:          aws.String("ADD #marks :new"),
+		ConditionExpression:       aws.String(containsAny(old, vals) + " AND " + noLiveLease),
+		ExpressionAttributeNames:  names(attrMarks, attrLease, attrHeartbeat),
+		ExpressionAttributeValues: vals,
+	})
+	switch {
+	case isCCF(err), isNotFound(err):
+		return false, nil
+	case err != nil:
 		return false, fmt.Errorf("lifecycle: refresh mark on %s: %w", key, err)
 	}
-	old := markElems(it, token)
-	now := c.now()
-	if !exists || len(old) == 0 || (it.Lease != nil && !c.isStale(it.Lease.Heartbeat, now)) {
-		return false, nil
-	}
-	elem := markElement(token, now)
+	c.addMark(key, token, elem)
 	var stale []string
 	for _, e := range old {
 		if e != elem {
 			stale = append(stale, e)
 		}
 	}
-	if len(stale) == len(old) {
-		_, err = a.UpdateItem(ctx, &dynamodb.UpdateItemInput{
-			TableName:                 aws.String(TableName),
-			Key:                       keyOf(key),
-			UpdateExpression:          aws.String("ADD #marks :new"),
-			ConditionExpression:       aws.String("contains(#marks, :old) AND " + noLiveLease),
-			ExpressionAttributeNames:  names(attrMarks, attrLease, attrHeartbeat),
-			ExpressionAttributeValues: map[string]types.AttributeValue{":new": ss(elem), ":old": s(old[0]), ":stale": s(c.staleBefore(now))},
-		})
-		switch {
-		case isCCF(err), isNotFound(err):
-			return false, nil
-		case err != nil:
-			return false, fmt.Errorf("lifecycle: refresh mark on %s: %w", key, err)
-		}
+	if len(stale) == 0 {
+		return true, nil
 	}
-	if len(stale) > 0 {
-		_, err = a.UpdateItem(ctx, &dynamodb.UpdateItemInput{
-			TableName:                 aws.String(TableName),
-			Key:                       keyOf(key),
-			UpdateExpression:          aws.String("DELETE #marks :old"),
-			ConditionExpression:       aws.String("attribute_exists(#pk)"),
-			ExpressionAttributeNames:  names(attrMarks, attrPK),
-			ExpressionAttributeValues: map[string]types.AttributeValue{":old": &types.AttributeValueMemberSS{Value: stale}},
-		})
-		if err != nil && !isCCF(err) && !isNotFound(err) {
-			// The new time stands; the old ages out.
-			return true, fmt.Errorf("lifecycle: refresh mark on %s: the new time stands; removing the old: %w", key, err)
-		}
+	_, err = a.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:                 aws.String(TableName),
+		Key:                       keyOf(key),
+		UpdateExpression:          aws.String("DELETE #marks :old"),
+		ConditionExpression:       aws.String("attribute_exists(#pk)"),
+		ExpressionAttributeNames:  names(attrMarks, attrPK),
+		ExpressionAttributeValues: map[string]types.AttributeValue{":old": &types.AttributeValueMemberSS{Value: stale}},
+	})
+	if err != nil && !isCCF(err) && !isNotFound(err) {
+		// The new time stands; the old ages out.
+		return true, fmt.Errorf("lifecycle: refresh mark on %s: the new time stands; removing the old: %w", key, err)
 	}
+	c.noteMarks(key, token, elem)
 	return true, nil
 }
 
