@@ -39,7 +39,12 @@ const (
 	attrClient     = "client"
 	attrStampState = "stampState"
 	attrStampEpoch = "stampEpoch"
+	attrKind       = "kind"
 )
+
+// leaseKindLock is the lease kind LockIfUnchanged writes; a claim's lease
+// has none.
+const leaseKindLock = "lock"
 
 // Item is a tool item as read from the table.
 type Item struct {
@@ -81,13 +86,18 @@ type Item struct {
 }
 
 // MarkInfo is a creator mark: its token (what Mark returned) and when it was
-// committed.
+// committed, or last refreshed (RefreshMark). A mark stored with no time,
+// or one that cannot be read, has a zero At: InUse takes it as live for the
+// mark bound from the item's ActiveAt or LastActivityAt, whichever is later,
+// and as dead when the item has neither.
 // lifecycle sets no bound on a mark's age: a caller that takes an old mark
 // for a creator that died decides its own, and acts on it only as judged
 // (SetIdleIfUnchanged).
 type MarkInfo struct {
 	Token string
 	At    time.Time
+	// elem is the mark as stored ("token|time").
+	elem string
 }
 
 // markElement is how a mark is stored: token|at.
@@ -96,10 +106,22 @@ func markElement(token string, at time.Time) string { return token + "|" + forma
 func decodeMark(e string) MarkInfo {
 	for i := len(e) - 1; i >= 0; i-- {
 		if e[i] == '|' {
-			return MarkInfo{Token: e, At: parseTime(e[i+1:])}
+			return MarkInfo{Token: e[:i], At: parseTime(e[i+1:]), elem: e}
 		}
 	}
-	return MarkInfo{Token: e}
+	return MarkInfo{Token: e, elem: e}
+}
+
+// markElems are the stored elements of token's marks on it (one, or two
+// while a refresh is between its writes).
+func markElems(it Item, token string) []string {
+	var out []string
+	for _, m := range it.Marks {
+		if m.Token == token {
+			out = append(out, m.elem)
+		}
+	}
+	return out
 }
 
 // LeaseInfo is a teardown claim as stored in a tool item.
@@ -107,7 +129,9 @@ type LeaseInfo struct {
 	Token string
 	Owner string
 	// Client is the claiming Client's own random id (AdoptLease).
-	Client    string
+	Client string
+	// Kind is "lock" for a LockIfUnchanged lease, "" for a teardown claim.
+	Kind      string
 	Heartbeat time.Time
 	Step      string
 }
@@ -146,6 +170,7 @@ func decodeItem(m map[string]types.AttributeValue) Item {
 			Token:     str(l.Value, attrToken),
 			Owner:     str(l.Value, attrOwner),
 			Client:    str(l.Value, attrClient),
+			Kind:      str(l.Value, attrKind),
 			Heartbeat: parseTime(str(l.Value, attrHeartbeat)),
 			Step:      str(l.Value, attrStep),
 		}
@@ -161,7 +186,7 @@ func decodeItem(m map[string]types.AttributeValue) Item {
 		for _, e := range mk.Value {
 			it.Marks = append(it.Marks, decodeMark(e))
 		}
-		sort.Slice(it.Marks, func(i, j int) bool { return it.Marks[i].Token < it.Marks[j].Token })
+		sort.Slice(it.Marks, func(i, j int) bool { return it.Marks[i].elem < it.Marks[j].elem })
 	}
 	if b, ok := m[attrIncomplete].(*types.AttributeValueMemberBOOL); ok {
 		it.Incomplete = b.Value
@@ -221,6 +246,34 @@ func epochCond(e int64, vals map[string]types.AttributeValue) string {
 }
 
 const noLiveLease = "(attribute_not_exists(#lease) OR #lease.#heartbeat < :stale)"
+
+// laCond keeps lastActivityAt from moving backwards, whatever the writers'
+// clocks: every write that stamps it (at :now) carries this condition, and
+// one that meets a later stamp is tried again at that stamp (newerStamp).
+const laCond = "(attribute_not_exists(#lastActivityAt) OR #lastActivityAt <= :now)"
+
+// newerStamp is the stored lastActivityAt a failed write met, from its
+// old item (an UpdateItem's, or the i-th item of a cancelled transaction),
+// when it is later than now.
+func newerStamp(err error, i int, now time.Time) (time.Time, bool) {
+	var item map[string]types.AttributeValue
+	var cc *types.ConditionalCheckFailedException
+	if errors.As(err, &cc) {
+		item = cc.Item
+	} else if reasons, ok := cancellation(err); ok {
+		item, _ = reasonCCF(reasons, i)
+	}
+	la := parseTime(str(item, attrLastActive))
+	return la, la.After(now)
+}
+
+// laterOf is the later of a and b.
+func laterOf(a, b time.Time) time.Time {
+	if b.After(a) {
+		return b
+	}
+	return a
+}
 
 func (c *Client) get(ctx context.Context, a API, key string) (Item, bool, error) {
 	out, err := a.GetItem(ctx, &dynamodb.GetItemInput{

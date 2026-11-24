@@ -16,10 +16,14 @@ import "time"
 // InUse reports whether the item, as read, is in use at now. It is, while
 // any of these holds:
 //
-//   - a live lease is on it: a heartbeat younger than DefaultStaleAfter;
+//   - a live lease is on it: a heartbeat at or after now minus
+//     DefaultStaleAfter, at the stored millisecond precision (the one test
+//     LeaseStale and the writes' noLiveLease condition use);
 //   - a hold is on it;
-//   - a creator mark on it is younger than markBound, or has no time (an
-//     older mark is a creator that died);
+//   - a creator mark on it is younger than markBound (an older one is a
+//     creator that died). A mark with no readable time is measured from the
+//     item's ActiveAt or LastActivityAt, whichever is later, and is dead
+//     outright when the item has neither;
 //   - its last MarkActive (PulseAt) is younger than markBound;
 //   - it is ACTIVE from a write with no times: its State or Epoch is not
 //     what the last write of this package stamped (StampState, StampEpoch),
@@ -36,7 +40,8 @@ func InUse(it Item, now time.Time, markBound time.Duration) bool {
 //
 //   - LastActivityAt (a mark added or removed, a hold added or removed, a
 //     MarkActive, an active Observe, a Release);
-//   - each mark's time plus markBound, and PulseAt plus markBound;
+//   - each mark's time (for one with none, as InUse measures it) plus
+//     markBound, and PulseAt plus markBound;
 //   - the lease's heartbeat plus DefaultStaleAfter;
 //   - the stored IdleSince, when an older client wrote the state last (the
 //     stamps differ) or the item has none of the times above.
@@ -65,11 +70,24 @@ func untimed(it Item) bool {
 	return it.State != "" && (it.StampState != it.State || it.StampEpoch != it.Epoch)
 }
 
+// markAt is when a mark is aged from: its own time, or, for one with no
+// readable time, the item's ActiveAt or LastActivityAt, whichever is later
+// (zero when it has neither: dead outright).
+func markAt(it Item, m MarkInfo) time.Time {
+	if !m.At.IsZero() {
+		return m.At
+	}
+	if it.LastActivityAt.After(it.ActiveAt) {
+		return it.LastActivityAt
+	}
+	return it.ActiveAt
+}
+
 // liveMark reports whether a creator mark on the item is younger than
-// markBound, or has no time.
+// markBound (markAt).
 func liveMark(it Item, now time.Time, markBound time.Duration) bool {
 	for _, m := range it.Marks {
-		if m.At.IsZero() || now.Sub(m.At) < markBound {
+		if at := markAt(it, m); !at.IsZero() && now.Sub(at) < markBound {
 			return true
 		}
 	}
@@ -78,7 +96,7 @@ func liveMark(it Item, now time.Time, markBound time.Duration) bool {
 
 func inUse(it Item, now time.Time, markBound, staleAfter time.Duration) bool {
 	switch {
-	case it.Lease != nil && now.Sub(it.Lease.Heartbeat) < staleAfter:
+	case it.Lease != nil && leaseLive(it.Lease.Heartbeat, now, staleAfter):
 		return true
 	case len(it.Holds) > 0, liveMark(it, now, markBound):
 		return true
@@ -99,7 +117,9 @@ func idleSince(it Item, now time.Time, markBound, staleAfter time.Duration) time
 		}
 	}
 	for _, m := range it.Marks {
-		later(m.At.Add(markBound))
+		if at := markAt(it, m); !at.IsZero() {
+			later(at.Add(markBound))
+		}
 	}
 	if !it.PulseAt.IsZero() {
 		later(it.PulseAt.Add(markBound))

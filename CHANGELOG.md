@@ -20,9 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Both refuse (`ErrChanged`, or a `*NotClaimableError` saying "changed since it was judged") when a creator marked, a creator finished, a hold appeared or another claim landed since the read.
   - `LockIfUnchanged` takes a lease without changing the item's state, a short exclusion for a backstop's maintenance; `Lease.Unlock` gives it back.
 - **Creator marks.** `Mark` adds a creator mark (`Item.Marks`: a set, one token and commit time per running creator) and returns its token, also with an error, so a mark that committed though its answer was lost can still be ended. `MarkDone(token)` removes that mark, stamps `lastActivityAt`, and changes nothing else. `Item.ActiveAt` is the time of the last activation.
+  - **`RefreshMark(token)`** re-stamps a mark's time, only while it is still there and no live lease is on the item. A creator that may run longer than its readers' mark bound (`Options.MarkBound`) must refresh well within it (a third, say). It reports false when the mark is gone or a teardown holds the item.
+  - A mark with no readable time is aged from the item's `ActiveAt` or `lastActivityAt`, whichever is later, and is dead outright when the item has neither, so an idle `Observe` removes it once past the bound.
 - **`Lease.Suspend`** gives a lease up after a teardown stopped partway. The item goes IDLE, marked `Item.Incomplete`, with no lease, so no creator waits for it, and the next backstop resumes it.
 - **`AdoptLease`** returns the live lease this very `Client` took (its owner name and its own random id both match), for a claim whose answer was lost, so the caller can give it back. A `Client` with no owner (`"unknown"`) adopts nothing.
 - `MarkDone` and `SetIdleIfUnchanged` retry a throttle or a conflicting transaction.
+- **`lastActivityAt` only moves forwards**, whatever the writers' clocks: every write that stamps it is conditional on not moving it back, and one that meets a later stamp records that one.
+- **`Lease.Unlock` refuses a claim's lease** (`ErrNotALock`): give a claim back with `Release` or `Suspend`. A lock's lease records `kind: lock`, which `AdoptLease` reads.
+- InUse, `LeaseStale` and the `noLiveLease` write condition share one definition of a live lease (at the stored millisecond precision).
+- Every read of `Options.Rand` is serialised, so a Rand that is not safe for concurrent use is safe here.
+- `ErrApplied` wraps the read-back error as well.
 
 ### Changed
 

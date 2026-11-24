@@ -181,8 +181,11 @@ type Options struct {
 	TablePollInterval time.Duration
 
 	// MarkBound is how long an idle Observe takes a creator mark for a
-	// creator still running; an older one is a creator that died. Readers
-	// pass their own bound to InUse and IdleSince. Default 1 h.
+	// creator still running: while one is younger than this, an idle
+	// Observe records nothing; an older one is a creator that died, removed
+	// with the rest. A creator that may run longer refreshes its mark
+	// (RefreshMark) well within it. Readers pass their own bound to InUse
+	// and IdleSince. Default 1 h.
 	MarkBound time.Duration
 }
 
@@ -191,6 +194,7 @@ type Options struct {
 type Client struct {
 	o       Options
 	mu      sync.Mutex
+	randMu  sync.Mutex // serialises reads of Options.Rand
 	clients map[string]API
 	// id is this Client's own random id (clientID), written with every
 	// lease it takes, so AdoptLease never takes another Client's lease for
@@ -315,7 +319,14 @@ func (c *Client) now() time.Time { return c.o.Now().UTC() }
 func (c *Client) staleBefore(now time.Time) string { return formatTime(now.Add(-c.o.StaleAfter)) }
 
 func (c *Client) isStale(heartbeat time.Time, now time.Time) bool {
-	return heartbeat.IsZero() || formatTime(heartbeat) < c.staleBefore(now)
+	return !leaseLive(heartbeat, now, c.o.StaleAfter)
+}
+
+// leaseLive is the one definition of a live lease, shared by every check
+// here (isStale, InUse) and by the noLiveLease condition: a heartbeat at or
+// after now-staleAfter, compared at the stored (millisecond) precision.
+func leaseLive(heartbeat, now time.Time, staleAfter time.Duration) bool {
+	return !heartbeat.IsZero() && formatTime(heartbeat) >= formatTime(now.Add(-staleAfter))
 }
 
 // clientID is this Client's own random id, made with its first lease.
@@ -334,7 +345,12 @@ func (c *Client) clientID() (string, error) {
 
 func (c *Client) newToken() (string, error) {
 	b := make([]byte, 16)
-	if _, err := io.ReadFull(c.o.Rand, b); err != nil {
+	// Options.Rand need not be safe for concurrent use: every read of it
+	// is serialised.
+	c.randMu.Lock()
+	_, err := io.ReadFull(c.o.Rand, b)
+	c.randMu.Unlock()
+	if err != nil {
 		return "", fmt.Errorf("lifecycle: lease token: %w", err)
 	}
 	return fmt.Sprintf("%x", b), nil

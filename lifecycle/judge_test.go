@@ -35,8 +35,11 @@ func TestInUseDefinition(t *testing.T) {
 		{"a live lease", with(stamped(lifecycle.StateTeardown, 1), func(i *lifecycle.Item) {
 			i.Lease = &lifecycle.LeaseInfo{Heartbeat: now.Add(-19 * time.Minute)}
 		}), true},
-		{"a stale lease", with(stamped(lifecycle.StateTeardown, 1), func(i *lifecycle.Item) {
+		{"a lease at the stale bound (live, as noLiveLease and LeaseStale say)", with(stamped(lifecycle.StateTeardown, 1), func(i *lifecycle.Item) {
 			i.Lease = &lifecycle.LeaseInfo{Heartbeat: now.Add(-20 * time.Minute)}
+		}), true},
+		{"a stale lease", with(stamped(lifecycle.StateTeardown, 1), func(i *lifecycle.Item) {
+			i.Lease = &lifecycle.LeaseInfo{Heartbeat: now.Add(-20*time.Minute - time.Millisecond)}
 		}), false},
 		{"a hold", with(stamped(lifecycle.StateIdle, 1), func(i *lifecycle.Item) { i.Holds = []tags.Tool{"spawn"} }), true},
 		{"a young mark", with(stamped(lifecycle.StateActive, 1), func(i *lifecycle.Item) {
@@ -45,9 +48,17 @@ func TestInUseDefinition(t *testing.T) {
 		{"a mark at the bound", with(stamped(lifecycle.StateActive, 1), func(i *lifecycle.Item) {
 			i.Marks = []lifecycle.MarkInfo{{Token: "a", At: now.Add(-bound)}}
 		}), false},
-		{"a mark with no time", with(stamped(lifecycle.StateIdle, 1), func(i *lifecycle.Item) {
+		{"a mark with no time, and no time on the item: dead", with(stamped(lifecycle.StateIdle, 1), func(i *lifecycle.Item) {
 			i.Marks = []lifecycle.MarkInfo{{Token: "a"}}
+		}), false},
+		{"a mark with no time, aged from a recent ActiveAt", with(stamped(lifecycle.StateIdle, 1), func(i *lifecycle.Item) {
+			i.Marks = []lifecycle.MarkInfo{{Token: "a"}}
+			i.ActiveAt, i.LastActivityAt = now.Add(-2*bound), now.Add(-time.Minute)
 		}), true},
+		{"a mark with no time, aged from an old LastActivityAt", with(stamped(lifecycle.StateIdle, 1), func(i *lifecycle.Item) {
+			i.Marks = []lifecycle.MarkInfo{{Token: "a"}}
+			i.ActiveAt, i.LastActivityAt = now.Add(-2*bound), now.Add(-bound)
+		}), false},
 		{"a young pulse", with(stamped(lifecycle.StateActive, 1), func(i *lifecycle.Item) { i.PulseAt = now.Add(-time.Minute) }), true},
 		{"an old pulse", with(stamped(lifecycle.StateActive, 1), func(i *lifecycle.Item) { i.PulseAt = now.Add(-bound) }), false},
 		{"an older client's ACTIVE (no stamps)", lifecycle.Item{State: lifecycle.StateActive, Epoch: 3}, true},

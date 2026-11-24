@@ -14,6 +14,10 @@ import (
 	"github.com/spore-host/libs/tags"
 )
 
+// errStampMoved: an active observation met a later lastActivityAt written
+// since its read (laCond); it is read and tried again.
+var errStampMoved = errors.New("lifecycle: lastActivityAt moved since the read")
+
 // Observe records what a backstop saw this tick: active is true when any of
 // tool's activity signals in scope is live. Only a component that can see
 // every activity signal of the tool may call it.
@@ -24,8 +28,11 @@ import (
 // idle, Observe sets state=IDLE and, if not already set, idleSince=now,
 // conditional on the epoch it read: if a creator ran MarkActive in between,
 // nothing is written and the fresh item is returned. A teardown holding a live
-// lease is left alone. Observe creates the table and the item if they do not
-// exist.
+// lease is left alone, and so is an item with a creator mark younger than
+// Options.MarkBound (a creator the backstop cannot see is running): an idle
+// Observe then records nothing. Older marks (creators that died) are removed
+// along with ACTIVE. An active Observe stamps lastActivityAt every time.
+// Observe creates the table and the item if they do not exist.
 //
 // It returns the item as it now stands and how long the tool has been idle.
 // While the table is being deleted it returns ErrTableClosing; observe again
@@ -38,6 +45,9 @@ func (c *Client) Observe(ctx context.Context, tool tags.Tool, scope string, acti
 	start := c.now()
 	for attempt := 1; ; attempt++ {
 		err := c.observeOnce(ctx, a, key, tool, scope, active)
+		if errors.Is(err, errStampMoved) && attempt < writeAttempts {
+			continue
+		}
 		var it Item
 		if err == nil {
 			it, _, err = c.get(ctx, a, key)
@@ -71,9 +81,10 @@ func (c *Client) observeOnce(ctx context.Context, a API, key string, tool tags.T
 		// activity seen.
 		nm = names(attrState, attrTool, attrScope, attrIdleSince, attrLease, attrIncomplete, attrLastActive)
 		vals[":active"] = s(string(StateActive))
-		vals[":now"] = s(formatTime(now))
+		vals[":now"] = s(formatTime(laterOf(now, it.LastActivityAt))) // only forwards
 		upd = "SET #state = :active, #tool = :tool, #scope = :scope, #lastActivityAt = :now" + stamp(StateActive, false, nm, vals) +
 			" REMOVE #idleSince, #lease, #incomplete"
+		cond = laCond
 	} else {
 		if exists && it.Lease != nil && !c.isStale(it.Lease.Heartbeat, now) {
 			return nil // a teardown is in progress
@@ -115,6 +126,10 @@ func (c *Client) observeOnce(ctx context.Context, a API, key string, tool tags.T
 		return err
 	case b.what == "sentinel":
 		return ErrTableClosing
+	case b.what == "lease" && cond == laCond:
+		// An active observation that met a later stamp written since its
+		// read: read again, and record it at that stamp.
+		return errStampMoved
 	case b.what == "lease":
 		// The item changed since it was read: a creator bumped the epoch,
 		// a hold appeared, or a teardown claimed it. Whatever happened is
@@ -217,6 +232,9 @@ type Lease struct {
 	tool  tags.Tool
 	scope string
 	token string
+	// lock: taken by LockIfUnchanged (Unlock gives it back); otherwise a
+	// teardown claim.
+	lock bool
 
 	mu   sync.Mutex
 	done bool
@@ -256,17 +274,30 @@ func (l *Lease) Step(ctx context.Context, name string) error {
 func (l *Lease) Release(ctx context.Context) error {
 	return l.write(ctx, "release", func(cond string, nm map[string]string, vals map[string]types.AttributeValue) error {
 		nm["#state"], nm["#idleSince"], nm["#incomplete"], nm["#lastActivityAt"] = attrState, attrIdleSince, attrIncomplete, attrLastActive
-		vals[":active"], vals[":now"] = s(string(StateActive)), s(formatTime(l.c.now()))
-		_, err := l.a.UpdateItem(ctx, &dynamodb.UpdateItemInput{
-			TableName: aws.String(TableName),
-			Key:       keyOf(l.key),
-			UpdateExpression: aws.String("SET #state = :active, #lastActivityAt = :now" + stamp(StateActive, false, nm, vals) +
-				" REMOVE #lease, #idleSince, #incomplete"),
-			ConditionExpression:       aws.String(cond),
-			ExpressionAttributeNames:  nm,
-			ExpressionAttributeValues: vals,
-		})
-		return err
+		vals[":active"] = s(string(StateActive))
+		upd := "SET #state = :active, #lastActivityAt = :now" + stamp(StateActive, false, nm, vals) + " REMOVE #lease, #idleSince, #incomplete"
+		now := l.c.now()
+		for attempt := 1; ; attempt++ {
+			vals[":now"] = s(formatTime(now))
+			_, err := l.a.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+				TableName:                           aws.String(TableName),
+				Key:                                 keyOf(l.key),
+				UpdateExpression:                    aws.String(upd),
+				ConditionExpression:                 aws.String(cond + " AND " + laCond),
+				ExpressionAttributeNames:            nm,
+				ExpressionAttributeValues:           vals,
+				ReturnValuesOnConditionCheckFailure: types.ReturnValuesOnConditionCheckFailureAllOld,
+			})
+			// Still this lease's, but a later stamp: release at that stamp.
+			var cc *types.ConditionalCheckFailedException
+			if la, newer := newerStamp(err, 0, now); newer && attempt < writeAttempts && errors.As(err, &cc) {
+				if old := decodeItem(cc.Item); old.Lease != nil && old.Lease.Token == l.token {
+					now = la
+					continue
+				}
+			}
+			return err
+		}
 	}, true)
 }
 

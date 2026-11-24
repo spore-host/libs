@@ -59,14 +59,23 @@ func (c *Client) RemoveHold(ctx context.Context, tool tags.Tool, scope string, h
 	// Only the hold goes, and the time of the change: whether the item is
 	// still in use is the reader's to judge (InUse), so nothing is left
 	// stuck ACTIVE by a second write that did not happen.
-	_, err = a.UpdateItem(ctx, &dynamodb.UpdateItemInput{
-		TableName:                 aws.String(TableName),
-		Key:                       keyOf(key),
-		UpdateExpression:          aws.String("SET #lastActivityAt = :now DELETE #holds :holder"),
-		ConditionExpression:       aws.String("attribute_exists(#pk)"),
-		ExpressionAttributeNames:  names(attrHolds, attrPK, attrLastActive),
-		ExpressionAttributeValues: map[string]types.AttributeValue{":holder": ss(string(holder)), ":now": s(formatTime(c.now()))},
-	})
+	now := c.now()
+	for attempt := 1; ; attempt++ {
+		_, err = a.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+			TableName:                           aws.String(TableName),
+			Key:                                 keyOf(key),
+			UpdateExpression:                    aws.String("SET #lastActivityAt = :now DELETE #holds :holder"),
+			ConditionExpression:                 aws.String("attribute_exists(#pk) AND " + laCond),
+			ExpressionAttributeNames:            names(attrHolds, attrPK, attrLastActive),
+			ExpressionAttributeValues:           map[string]types.AttributeValue{":holder": ss(string(holder)), ":now": s(formatTime(now))},
+			ReturnValuesOnConditionCheckFailure: types.ReturnValuesOnConditionCheckFailureAllOld,
+		})
+		la, newer := newerStamp(err, 0, now)
+		if !isCCF(err) || !newer || attempt == writeAttempts {
+			break
+		}
+		now = la // a later stamp: the change is stamped there
+	}
 	if err == nil || isCCF(err) || isNotFound(err) {
 		return nil
 	}
@@ -91,8 +100,9 @@ func (c *Client) activate(ctx context.Context, tool tags.Tool, scope string, hol
 	element := ""
 	start := c.now()
 	missing, polls := 0, 0
+	var floor time.Time // a later lastActivityAt met (laCond)
 	for {
-		now := c.now()
+		now := laterOf(c.now(), floor)
 		if mark != "" {
 			element = markElement(mark, now)
 		}
@@ -115,6 +125,13 @@ func (c *Client) activate(ctx context.Context, tool tags.Tool, scope string, hol
 			return element, fmt.Errorf("lifecycle: mark %s active: %w", key, err)
 		}
 		missing = 0
+		if b.what == "lease" {
+			// A later stamp, not a live lease: try again at that stamp.
+			if it := decodeItem(b.item); it.LastActivityAt.After(now) && (it.Lease == nil || c.isStale(it.Lease.Heartbeat, c.now())) {
+				floor = it.LastActivityAt
+				continue
+			}
+		}
 		now = c.now()
 		if b.what == "sentinel" && !b.sentinel.IsZero() && c.isStale(b.sentinel, now) {
 			if err := c.clearStaleSentinel(ctx, a, now); err != nil {
@@ -180,7 +197,7 @@ func (c *Client) activateOnce(ctx context.Context, a API, key string, tool tags.
 			TableName:                           aws.String(TableName),
 			Key:                                 keyOf(key),
 			UpdateExpression:                    aws.String(upd),
-			ConditionExpression:                 aws.String(noLiveLease),
+			ConditionExpression:                 aws.String(noLiveLease + " AND " + laCond),
 			ExpressionAttributeNames:            nm,
 			ExpressionAttributeValues:           vals,
 			ReturnValuesOnConditionCheckFailure: types.ReturnValuesOnConditionCheckFailureAllOld,
