@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -47,10 +45,10 @@ type Expect struct {
 	State  State
 	// LeaseToken is the lease's token, "" for no lease.
 	LeaseToken string
-	// Marks are the creator marks' tokens, sorted; none for no mark.
-	Marks []string
-	// LastActivity is the item's LastActivityAt: any activity stamped since
-	// (an active Observe, a Release) is a change too.
+	// LastActivity is the item's LastActivityAt, the one change detector:
+	// every write that changes what keeps the item in use (a mark made,
+	// refreshed or ended, a hold, MarkActive, an active Observe, a Release)
+	// stamps it.
 	LastActivity time.Time
 }
 
@@ -63,10 +61,6 @@ func ExpectOf(it Item, exists bool) Expect {
 	if it.Lease != nil {
 		e.LeaseToken = it.Lease.Token
 	}
-	for _, m := range it.Marks {
-		e.Marks = append(e.Marks, m.elem)
-	}
-	sort.Strings(e.Marks)
 	e.LastActivity = it.LastActivityAt
 	return e
 }
@@ -75,7 +69,7 @@ func ExpectOf(it Item, exists bool) Expect {
 func (e Expect) matches(it Item, exists bool) bool {
 	x := ExpectOf(it, exists)
 	return x.Exists == e.Exists && x.Epoch == e.Epoch && x.State == e.State && x.LeaseToken == e.LeaseToken &&
-		strings.Join(x.Marks, "\x00") == strings.Join(e.Marks, "\x00") && x.LastActivity.Equal(e.LastActivity)
+		x.LastActivity.Equal(e.LastActivity)
 }
 
 // cond is e as a condition expression, with its names and values added.
@@ -84,7 +78,7 @@ func (e Expect) cond(nm map[string]string, vals map[string]types.AttributeValue)
 		nm["#pk"] = attrPK
 		return "attribute_not_exists(#pk)"
 	}
-	nm["#state"], nm["#lease"], nm["#marks"], nm["#epoch"] = attrState, attrLease, attrMarks, attrEpoch
+	nm["#state"], nm["#lease"], nm["#epoch"] = attrState, attrLease, attrEpoch
 	vals[":xstate"] = s(string(e.State))
 	c := epochCond(e.Epoch, vals) + " AND #state = :xstate"
 	if e.LeaseToken == "" {
@@ -94,20 +88,23 @@ func (e Expect) cond(nm map[string]string, vals map[string]types.AttributeValue)
 		vals[":xlease"] = s(e.LeaseToken)
 		c += " AND #lease.#token = :xlease"
 	}
-	if len(e.Marks) == 0 {
-		c += " AND attribute_not_exists(#marks)"
-	} else {
-		vals[":xmarks"] = &types.AttributeValueMemberSS{Value: append([]string(nil), e.Marks...)}
-		c += " AND #marks = :xmarks"
-	}
+	return c + " AND " + laEqual(e.LastActivity, nm, vals)
+}
+
+// laEqual is the condition that lastActivityAt is still t (absent for a
+// zero t): the one change detector, since every write that changes what
+// keeps an item in use stamps it with its writer's clock. Writers' clocks
+// are assumed to agree within a few minutes (NTP on Lambda and CLI hosts);
+// grace and mark bounds are tens of minutes or more, so the skew is
+// immaterial, and two writes stamping the same millisecond is the one change
+// this cannot see.
+func laEqual(t time.Time, nm map[string]string, vals map[string]types.AttributeValue) string {
 	nm["#lastActivityAt"] = attrLastActive
-	if e.LastActivity.IsZero() {
-		c += " AND attribute_not_exists(#lastActivityAt)"
-	} else {
-		vals[":xlast"] = s(formatTime(e.LastActivity))
-		c += " AND #lastActivityAt = :xlast"
+	if t.IsZero() {
+		return "attribute_not_exists(#lastActivityAt)"
 	}
-	return c
+	vals[":xlast"] = s(formatTime(t))
+	return "#lastActivityAt = :xlast"
 }
 
 // retryable reports whether a write may simply be tried again: a throttle,
@@ -130,108 +127,31 @@ const writeAttempts = 4
 // again waits a poll interval before the next attempt.
 func (c *Client) again(ctx context.Context) error { return c.o.Sleep(ctx, c.o.PollInterval) }
 
-// Mark records that a creator is running in scope: it adds a creator mark
-// (its token and the time it was committed) to the item's marks, as
-// MarkActive activates it, and returns the token for MarkDone. A mark keeps
-// the item in use (InUse) until MarkDone removes it, or until it is older
-// than the reader's mark bound (a creator that died). A creator that may run
-// longer than the bound its readers use (Options.MarkBound for an idle
-// Observe) must refresh its mark (RefreshMark) well within it, at a third of
-// it say. On an error the token is returned too: a mark that was committed
-// though its answer was lost can be ended with it, and ages out if it is not.
+// Mark records that a creator is running in scope: it sets the creator's
+// mark (marks[token] = the time it commits), as MarkActive activates it, and
+// returns the token for MarkDone. A mark keeps the item in use (InUse) until
+// MarkDone removes it, or until it is older than the reader's mark bound (a
+// creator that died). A creator that may run longer than the bound its
+// readers use (Options.MarkBound for an idle Observe) must refresh its mark
+// (RefreshMark) well within it, at a third of it say. On an error the token
+// is returned too: a mark that was committed though its answer was lost can
+// be ended with it, and ages out if it is not.
 func (c *Client) Mark(ctx context.Context, tool tags.Tool, scope string) (string, error) {
 	token, err := c.newToken()
 	if err != nil {
 		return "", err
 	}
-	_, err = c.activate(ctx, tool, scope, "", token)
-	return token, err
+	return token, c.activate(ctx, tool, scope, "", token)
 }
 
 // MarkDone removes the creator mark token, and stamps the item's
 // LastActivityAt. It never changes the item's state: whether the item is
 // still in use, and since when it is idle, is the reader's to judge
 // (InUse, IdleSince). It reports whether it removed the mark: false (with a
-// nil error) when the mark or the item is gone already. A throttle is tried
-// again. The Client that wrote the mark removes it with no read; any other
-// reads the item first.
+// nil error) when the mark or the item is gone already. One write, no
+// read; a throttle is tried again.
 func (c *Client) MarkDone(ctx context.Context, tool tags.Tool, scope, token string) (bool, error) {
-	a, _, key, err := c.target(tool, scope)
-	if err != nil {
-		return false, err
-	}
-	elems, gone, err := c.markElemsOf(ctx, a, key, token)
-	if err != nil || gone {
-		return false, err
-	}
-	now := c.now()
-	for attempt := 1; ; attempt++ {
-		nm := names(attrMarks, attrLastActive, attrPK)
-		vals := map[string]types.AttributeValue{":mark": &types.AttributeValueMemberSS{Value: elems}, ":now": s(formatTime(now))}
-		_, err = a.UpdateItem(ctx, &dynamodb.UpdateItemInput{
-			TableName:                           aws.String(TableName),
-			Key:                                 keyOf(key),
-			UpdateExpression:                    aws.String("SET #lastActivityAt = :now DELETE #marks :mark"),
-			ConditionExpression:                 aws.String("attribute_exists(#pk) AND " + containsAny(elems, vals) + " AND " + laCond),
-			ExpressionAttributeNames:            nm,
-			ExpressionAttributeValues:           vals,
-			ReturnValuesOnConditionCheckFailure: types.ReturnValuesOnConditionCheckFailureAllOld,
-		})
-		var cc *types.ConditionalCheckFailedException
-		switch {
-		case err == nil:
-			c.noteMarks(key, token)
-			return true, nil
-		case isNotFound(err):
-			c.noteMarks(key, token)
-			return false, nil
-		case errors.As(err, &cc):
-			if old := decodeItem(cc.Item); len(markElems(old, token)) == 0 {
-				c.noteMarks(key, token)
-				return false, nil // not on it (already done, or cleared by a backstop)
-			} else if la, newer := newerStamp(err, 0, now); newer && attempt < writeAttempts {
-				now = la // a later stamp: the end is stamped there
-				elems = markElems(old, token)
-				continue
-			}
-		case retryable(err) && attempt < writeAttempts:
-			if err := c.again(ctx); err != nil {
-				return false, err
-			}
-			continue
-		}
-		return false, fmt.Errorf("lifecycle: end mark on %s: %w", key, err)
-	}
-}
-
-// markElemsOf are token's stored mark elements on key: those this Client
-// wrote, or, for a mark it did not write, as read. gone: no such mark, or no
-// item or table.
-func (c *Client) markElemsOf(ctx context.Context, a API, key, token string) (elems []string, gone bool, err error) {
-	if elems = c.knownMarks(key, token); len(elems) > 0 {
-		return elems, false, nil
-	}
-	it, exists, err := c.get(ctx, a, key)
-	switch {
-	case isNotFound(err):
-		return nil, true, nil
-	case err != nil:
-		return nil, false, fmt.Errorf("lifecycle: read %s: %w", key, err)
-	}
-	elems = markElems(it, token)
-	return elems, !exists || len(elems) == 0, nil
-}
-
-// containsAny is the condition that the marks hold any of elems, with its
-// values added.
-func containsAny(elems []string, vals map[string]types.AttributeValue) string {
-	parts := make([]string, len(elems))
-	for i, e := range elems {
-		v := fmt.Sprintf(":e%d", i)
-		vals[v] = s(e)
-		parts[i] = "contains(#marks, " + v + ")"
-	}
-	return "(" + strings.Join(parts, " OR ") + ")"
+	return c.markWrite(ctx, tool, scope, token, "REMOVE #marks.#tok", "", "end mark")
 }
 
 // RefreshMark re-stamps the creator mark token with the time now, only if it
@@ -240,59 +160,52 @@ func containsAny(elems []string, vals map[string]types.AttributeValue) string {
 // the bound, so its mark is never taken for a creator that died. It reports
 // whether it refreshed the mark; false (with a nil error) means the mark is
 // gone (aged out and removed, or ended), or a teardown holds the item: the
-// creator should stop creating. A refresh is two writes (the new time added,
-// then the old removed); between them, or if the second fails, the mark has
-// both times, which is in use either way, and the older one ages out. Like
-// MarkDone, the Client that wrote the mark needs no read.
+// creator should stop creating. One write, no read.
 func (c *Client) RefreshMark(ctx context.Context, tool tags.Tool, scope, token string) (bool, error) {
+	return c.markWrite(ctx, tool, scope, token, ", #marks.#tok = :now", " AND "+noLiveLease, "refresh mark")
+}
+
+// markWrite is MarkDone's and RefreshMark's one write on token's mark,
+// stamping lastActivityAt, on condition that the mark is there (and cond).
+func (c *Client) markWrite(ctx context.Context, tool tags.Tool, scope, token, upd, cond, what string) (bool, error) {
 	a, _, key, err := c.target(tool, scope)
 	if err != nil {
 		return false, err
 	}
-	old, gone, err := c.markElemsOf(ctx, a, key, token)
-	if err != nil || gone {
-		return false, err
-	}
 	now := c.now()
-	elem := markElement(token, now)
-	vals := map[string]types.AttributeValue{":new": ss(elem), ":stale": s(c.staleBefore(now))}
-	_, err = a.UpdateItem(ctx, &dynamodb.UpdateItemInput{
-		TableName:                 aws.String(TableName),
-		Key:                       keyOf(key),
-		UpdateExpression:          aws.String("ADD #marks :new"),
-		ConditionExpression:       aws.String(containsAny(old, vals) + " AND " + noLiveLease),
-		ExpressionAttributeNames:  names(attrMarks, attrLease, attrHeartbeat),
-		ExpressionAttributeValues: vals,
-	})
-	switch {
-	case isCCF(err), isNotFound(err):
-		return false, nil
-	case err != nil:
-		return false, fmt.Errorf("lifecycle: refresh mark on %s: %w", key, err)
+	nm := names(attrMarks, attrLastActive)
+	nm["#tok"] = token
+	vals := map[string]types.AttributeValue{":now": s(formatTime(now))}
+	if cond != "" {
+		nm["#lease"], nm["#heartbeat"] = attrLease, attrHeartbeat
+		vals[":stale"] = s(c.staleBefore(now))
 	}
-	c.addMark(key, token, elem)
-	var stale []string
-	for _, e := range old {
-		if e != elem {
-			stale = append(stale, e)
+	expr := "SET #lastActivityAt = :now" + upd
+	if upd[0] != ',' {
+		expr = "SET #lastActivityAt = :now " + upd
+	}
+	for attempt := 1; ; attempt++ {
+		_, err = a.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+			TableName:                 aws.String(TableName),
+			Key:                       keyOf(key),
+			UpdateExpression:          aws.String(expr),
+			ConditionExpression:       aws.String("attribute_exists(#marks.#tok)" + cond),
+			ExpressionAttributeNames:  nm,
+			ExpressionAttributeValues: vals,
+		})
+		if err == nil || !retryable(err) || attempt == writeAttempts {
+			break
+		}
+		if err := c.again(ctx); err != nil {
+			return false, err
 		}
 	}
-	if len(stale) == 0 {
-		return true, nil
+	switch {
+	case isCCF(err), isNotFound(err):
+		return false, nil // not on it (gone, ended, or a teardown holds it)
+	case err != nil:
+		return false, fmt.Errorf("lifecycle: %s on %s: %w", what, key, err)
 	}
-	_, err = a.UpdateItem(ctx, &dynamodb.UpdateItemInput{
-		TableName:                 aws.String(TableName),
-		Key:                       keyOf(key),
-		UpdateExpression:          aws.String("DELETE #marks :old"),
-		ConditionExpression:       aws.String("attribute_exists(#pk)"),
-		ExpressionAttributeNames:  names(attrMarks, attrPK),
-		ExpressionAttributeValues: map[string]types.AttributeValue{":old": &types.AttributeValueMemberSS{Value: stale}},
-	})
-	if err != nil && !isCCF(err) && !isNotFound(err) {
-		// The new time stands; the old ages out.
-		return true, fmt.Errorf("lifecycle: refresh mark on %s: the new time stands; removing the old: %w", key, err)
-	}
-	c.noteMarks(key, token, elem)
 	return true, nil
 }
 
@@ -454,7 +367,7 @@ func (c *Client) ClaimIfUnchanged(ctx context.Context, tool tags.Tool, scope str
 }
 
 // LockIfUnchanged takes a lease on the item without changing its state, if
-// the item is still exactly e and no live lease is on it: a short exclusion,
+// the item is still exactly e, is not TEARDOWN, and no live lease is on it: a short exclusion,
 // for maintenance a backstop must not race (lagotto#340: deleting a region's
 // pending teardown jobs). While it is held, Claim refuses, an idle Observe
 // records nothing, and MarkActive waits; an active Observe, or a creator
@@ -464,8 +377,13 @@ func (c *Client) LockIfUnchanged(ctx context.Context, tool tags.Tool, scope stri
 	if err != nil {
 		return nil, err
 	}
-	if !e.Exists {
+	switch {
+	case !e.Exists:
 		return nil, &NotClaimableError{Tool: tool, Scope: scope, Reason: "no lifecycle item"}
+	case e.State == StateTeardown:
+		// A teardown's item, its lease live or not: a lock taken over it
+		// would leave it TEARDOWN with no lease once unlocked.
+		return nil, &NotClaimableError{Tool: tool, Scope: scope, Reason: "state is TEARDOWN"}
 	}
 	token, err := c.newToken()
 	if err != nil {
@@ -501,10 +419,11 @@ func (c *Client) LockIfUnchanged(ctx context.Context, tool tags.Tool, scope stri
 	return &Lease{c: c, a: a, key: key, tool: tool, scope: scope, token: token, lock: true}, nil
 }
 
-// ErrNotALock is Unlock's refusal of a lease that is a teardown claim:
-// removing it would leave the item TEARDOWN with no lease and nothing to say
-// the teardown is incomplete. Give a claim back with Release or Suspend.
-var ErrNotALock = errors.New("lifecycle: the lease is a teardown claim, not a lock: give it back with Release or Suspend")
+// ErrNotALock is the refusal of a lease of the wrong kind: Unlock of a
+// teardown claim (it would leave the item TEARDOWN with no lease and nothing
+// to say the teardown is incomplete: give a claim back with Release or
+// Suspend), and Release or Suspend of a lock (give it back with Unlock).
+var ErrNotALock = errors.New("lifecycle: the lease is of the other kind: a claim goes back with Release or Suspend, a lock with Unlock")
 
 // Unlock gives back a lease LockIfUnchanged took, leaving the item's state
 // as it was. A claim's lease (Claim, ClaimIfUnchanged, or one AdoptLease
@@ -567,6 +486,9 @@ func (c *Client) adoptID() string {
 // Item.Incomplete). Any activity (MarkActive, Mark, AddHold, an active
 // Observe), a Claim and a Release clear the mark.
 func (l *Lease) Suspend(ctx context.Context) error {
+	if l.lock {
+		return fmt.Errorf("lifecycle: suspend %s: %w", l.key, ErrNotALock)
+	}
 	now := l.c.now()
 	return l.write(ctx, "suspend", func(cond string, nm map[string]string, vals map[string]types.AttributeValue) error {
 		nm["#state"], nm["#idleSince"], nm["#incomplete"] = attrState, attrIdleSince, attrIncomplete

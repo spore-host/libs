@@ -96,32 +96,6 @@ type Item struct {
 type MarkInfo struct {
 	Token string
 	At    time.Time
-	// elem is the mark as stored ("token|time").
-	elem string
-}
-
-// markElement is how a mark is stored: token|at.
-func markElement(token string, at time.Time) string { return token + "|" + formatTime(at) }
-
-func decodeMark(e string) MarkInfo {
-	for i := len(e) - 1; i >= 0; i-- {
-		if e[i] == '|' {
-			return MarkInfo{Token: e[:i], At: parseTime(e[i+1:]), elem: e}
-		}
-	}
-	return MarkInfo{Token: e, elem: e}
-}
-
-// markElems are the stored elements of token's marks on it (one, or two
-// while a refresh is between its writes).
-func markElems(it Item, token string) []string {
-	var out []string
-	for _, m := range it.Marks {
-		if m.Token == token {
-			out = append(out, m.elem)
-		}
-	}
-	return out
 }
 
 // LeaseInfo is a teardown claim as stored in a tool item.
@@ -182,11 +156,15 @@ func decodeItem(m map[string]types.AttributeValue) Item {
 	it.ActiveAt = parseTime(str(m, attrActiveAt))
 	it.PulseAt = parseTime(str(m, attrPulseAt))
 	it.LastActivityAt = parseTime(str(m, attrLastActive))
-	if mk, ok := m[attrMarks].(*types.AttributeValueMemberSS); ok {
-		for _, e := range mk.Value {
-			it.Marks = append(it.Marks, decodeMark(e))
+	if mk, ok := m[attrMarks].(*types.AttributeValueMemberM); ok {
+		for tok, v := range mk.Value {
+			mi := MarkInfo{Token: tok}
+			if at, ok := v.(*types.AttributeValueMemberS); ok {
+				mi.At = parseTime(at.Value)
+			}
+			it.Marks = append(it.Marks, mi)
 		}
-		sort.Slice(it.Marks, func(i, j int) bool { return it.Marks[i].elem < it.Marks[j].elem })
+		sort.Slice(it.Marks, func(i, j int) bool { return it.Marks[i].Token < it.Marks[j].Token })
 	}
 	if b, ok := m[attrIncomplete].(*types.AttributeValueMemberBOOL); ok {
 		it.Incomplete = b.Value
@@ -246,34 +224,6 @@ func epochCond(e int64, vals map[string]types.AttributeValue) string {
 }
 
 const noLiveLease = "(attribute_not_exists(#lease) OR #lease.#heartbeat < :stale)"
-
-// laCond keeps lastActivityAt from moving backwards, whatever the writers'
-// clocks: every write that stamps it (at :now) carries this condition, and
-// one that meets a later stamp is tried again at that stamp (newerStamp).
-const laCond = "(attribute_not_exists(#lastActivityAt) OR #lastActivityAt <= :now)"
-
-// newerStamp is the stored lastActivityAt a failed write met, from its
-// old item (an UpdateItem's, or the i-th item of a cancelled transaction),
-// when it is later than now.
-func newerStamp(err error, i int, now time.Time) (time.Time, bool) {
-	var item map[string]types.AttributeValue
-	var cc *types.ConditionalCheckFailedException
-	if errors.As(err, &cc) {
-		item = cc.Item
-	} else if reasons, ok := cancellation(err); ok {
-		item, _ = reasonCCF(reasons, i)
-	}
-	la := parseTime(str(item, attrLastActive))
-	return la, la.After(now)
-}
-
-// laterOf is the later of a and b.
-func laterOf(a, b time.Time) time.Time {
-	if b.After(a) {
-		return b
-	}
-	return a
-}
 
 func (c *Client) get(ctx context.Context, a API, key string) (Item, bool, error) {
 	out, err := a.GetItem(ctx, &dynamodb.GetItemInput{

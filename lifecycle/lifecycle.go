@@ -18,10 +18,10 @@
 //	idleSince  RFC 3339; set by the first idle Observe, removed by any activity
 //	lease      {token, owner, client, heartbeat, step}: the teardown claim
 //	holds      string set: tools that depend on this one in this scope
-//	marks      string set: "token|time", one per running creator (Mark, until MarkDone)
+//	marks      map token -> RFC 3339: one per running creator (Mark, refreshed by RefreshMark, until MarkDone)
 //	activeAt   RFC 3339; the last activation
 //	pulseAt    RFC 3339; the last MarkActive
-//	lastActivityAt  RFC 3339; the last mark, hold, MarkActive, active Observe or Release, added or removed
+//	lastActivityAt  RFC 3339; every write that changes what keeps the item in use stamps it (the change detector)
 //	stampState, stampEpoch  the state and epoch this package's last state write left
 //	incomplete bool: a teardown suspended partway (Lease.Suspend)
 //	tool, scope  the item's own tool and scope, for readability
@@ -200,49 +200,6 @@ type Client struct {
 	// lease it takes, so AdoptLease never takes another Client's lease for
 	// its own. Empty until its first lease.
 	id string
-	// marks are the stored elements of the creator marks this Client wrote
-	// (Mark, RefreshMark), by item key and token, so MarkDone and
-	// RefreshMark need no read (a CLI user's grant has no GetItem).
-	marks map[string][]string
-}
-
-func markKey(key, token string) string { return key + "\x00" + token }
-
-// knownMarks are the elements this Client wrote for token on key.
-func (c *Client) knownMarks(key, token string) []string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return append([]string(nil), c.marks[markKey(key, token)]...)
-}
-
-// noteMarks records (or, with none, forgets) the elements of token on key.
-func (c *Client) noteMarks(key, token string, elems ...string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.marks == nil {
-		c.marks = map[string][]string{}
-	}
-	if len(elems) == 0 {
-		delete(c.marks, markKey(key, token))
-		return
-	}
-	c.marks[markKey(key, token)] = elems
-}
-
-// addMark records one more element of token on key.
-func (c *Client) addMark(key, token, elem string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.marks == nil {
-		c.marks = map[string][]string{}
-	}
-	k := markKey(key, token)
-	for _, e := range c.marks[k] {
-		if e == elem {
-			return
-		}
-	}
-	c.marks[k] = append(c.marks[k], elem)
 }
 
 // New returns a Client.

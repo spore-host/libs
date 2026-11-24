@@ -295,7 +295,11 @@ func loseReply(f *lifecycletest.Fake, op string) {
 func TestReviewFinding6LostMarkReply(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
-	if err := e.c.MarkActive(ctx, tool, region); err != nil {
+	first, err := e.c.Mark(ctx, tool, region) // the marks map, made
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.c.MarkDone(ctx, tool, region, first); err != nil {
 		t.Fatal(err)
 	}
 	loseReply(e.fake(), "TransactWriteItems")

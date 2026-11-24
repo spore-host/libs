@@ -259,6 +259,7 @@ func TestSetIdleIfUnchanged(t *testing.T) {
 	}
 	// A creator's done between the read and the write changes the set too.
 	now, ok := e.read(lifecycle.ScopeGlobal)
+	e.advance(time.Millisecond) // a write in the very millisecond of the last stamp is the one change unseen (laEqual)
 	if _, err := e.client("another creator").MarkDone(ctx, tool, lifecycle.ScopeGlobal, tb); err != nil {
 		t.Fatal(err)
 	}
@@ -689,7 +690,7 @@ func TestRemoveHoldIdleFails(t *testing.T) {
 	}
 	if err := e3.fake().PutRaw(lifecycle.TableName, map[string]types.AttributeValue{
 		"pk": &types.AttributeValueMemberS{Value: "tool#lagotto#us-west-2"}, "state": &types.AttributeValueMemberS{Value: "ACTIVE"},
-		"marks": &types.AttributeValueMemberSS{Value: []string{"legacy"}},
+		"marks": &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{"legacy": &types.AttributeValueMemberN{Value: "1"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}

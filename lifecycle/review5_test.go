@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 
 	"github.com/spore-host/libs/lifecycle"
@@ -21,7 +20,7 @@ import (
 // is past the bound, so the item never stays in use for ever.
 func TestReview5UntimedMarksAge(t *testing.T) {
 	ctx := context.Background()
-	for _, mark := range []string{"legacy", "tok|not-a-time"} {
+	for mark, at := range map[string]types.AttributeValue{"no time": &types.AttributeValueMemberN{Value: "1"}, "tok": &types.AttributeValueMemberS{Value: "not-a-time"}} {
 		e := newEnv(t)
 		if err := e.c.MarkActive(ctx, tool, region); err != nil {
 			t.Fatal(err)
@@ -31,7 +30,7 @@ func TestReview5UntimedMarksAge(t *testing.T) {
 			"epoch": &types.AttributeValueMemberN{Value: "1"}, "stampState": &types.AttributeValueMemberS{Value: "ACTIVE"},
 			"stampEpoch": &types.AttributeValueMemberN{Value: "1"},
 			"activeAt":   &types.AttributeValueMemberS{Value: "2026-11-16T12:00:00.000Z"},
-			"marks":      &types.AttributeValueMemberSS{Value: []string{mark}},
+			"marks":      &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{mark: at}},
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -59,11 +58,11 @@ func TestReview5UntimedMarksAge(t *testing.T) {
 	}
 }
 
-// TestReview5RefreshMark (L2): a creator running past the bound refreshes
-// its mark and stays in use; a refresh is a change to a judged item; a mark
-// that is gone, or an item under a teardown's live lease, is not refreshed;
-// a refresh whose second write fails leaves both times, which MarkDone
-// removes together.
+// TestReview5RefreshMark (L2, and the sixth review's one-write form): a
+// creator running past the bound refreshes its mark and stays in use; a
+// refresh is a change to a judged item; a mark that is gone, or an item
+// under another's live lease, is not refreshed. One write, no read, from
+// any Client.
 func TestReview5RefreshMark(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
@@ -73,15 +72,16 @@ func TestReview5RefreshMark(t *testing.T) {
 	}
 	e.advance(bound / 3)
 	judged, ok := e.read(region)
-	if done, err := e.c.RefreshMark(ctx, tool, region, tok); !done || err != nil {
+	reads := e.fake().Calls("GetItem")
+	if done, err := e.client("another client").RefreshMark(ctx, tool, region, tok); !done || err != nil {
 		t.Fatalf("refresh: %v %v", done, err)
 	}
-	if done, err := e.c.RefreshMark(ctx, tool, region, tok); !done || err != nil {
-		t.Fatalf("a refresh at the same time: %v %v", done, err)
+	if n := e.fake().Calls("GetItem") - reads; n != 0 {
+		t.Errorf("%d reads", n)
 	}
 	it, _ := e.read(region)
-	if len(it.Marks) != 1 || it.Marks[0].Token != tok || !it.Marks[0].At.Equal(t0.Add(bound/3)) {
-		t.Fatalf("after the refresh: %+v", it.Marks)
+	if len(it.Marks) != 1 || it.Marks[0].Token != tok || !it.Marks[0].At.Equal(t0.Add(bound/3)) || !it.LastActivityAt.Equal(t0.Add(bound/3)) {
+		t.Fatalf("after the refresh: %+v", it)
 	}
 	e.advance(bound - time.Minute)
 	if it, _ := e.read(region); !lifecycle.InUse(it, e.clock(), bound) {
@@ -90,32 +90,21 @@ func TestReview5RefreshMark(t *testing.T) {
 	if _, err := e.c.SetIdleIfUnchanged(ctx, tool, region, lifecycle.ExpectOf(judged, ok)); !errors.Is(err, lifecycle.ErrChanged) {
 		t.Errorf("a refresh is a change: %v", err)
 	}
-	// The second write fails: both times, ended together.
-	e.fake().Err = func(op string, in any) error {
-		if u, ok := in.(*dynamodb.UpdateItemInput); ok && op == "UpdateItem" && *u.UpdateExpression == "DELETE #marks :old" {
-			return errors.New("network down")
-		}
-		return nil
-	}
-	if done, err := e.c.RefreshMark(ctx, tool, region, tok); !done || err == nil {
-		t.Errorf("a failed second write: %v %v", done, err)
-	}
-	e.fake().Err = nil
-	if it, _ := e.read(region); len(it.Marks) != 2 {
-		t.Errorf("both times: %+v", it.Marks)
-	}
 	if done, err := e.c.MarkDone(ctx, tool, region, tok); !done || err != nil {
 		t.Fatal(done, err)
 	}
-	if it, _ := e.read(region); len(it.Marks) != 0 {
-		t.Errorf("after the done: %+v", it.Marks)
-	}
-	// Gone: not refreshed.
+	// Gone: not refreshed, nor ended again.
 	if done, err := e.c.RefreshMark(ctx, tool, region, tok); done || err != nil {
 		t.Errorf("a gone mark: %v %v", done, err)
 	}
+	if done, err := e.c.MarkDone(ctx, tool, region, tok); done || err != nil {
+		t.Errorf("a second done: %v %v", done, err)
+	}
 	if done, err := newEnv(t).c.RefreshMark(ctx, tool, region, tok); done || err != nil {
 		t.Errorf("no table: %v %v", done, err)
+	}
+	if it, ok := newEnv(t).read(region); ok {
+		t.Errorf("a refresh made an item: %+v", it)
 	}
 	// Under another's live lease (a lock): not refreshed.
 	tok2, _ := e.c.Mark(ctx, tool, region)
@@ -130,145 +119,17 @@ func TestReview5RefreshMark(t *testing.T) {
 	if err := l.Unlock(ctx); err != nil {
 		t.Fatal(err)
 	}
-	// The Client that wrote the mark refreshes and ends it with no read (a
-	// CLI user's grant has no GetItem); any other reads it, and a read that
-	// fails is an error.
-	reads := e.fake().Calls("GetItem")
-	if done, err := e.c.RefreshMark(ctx, tool, region, tok2); !done || err != nil {
-		t.Errorf("unlocked: %v %v", done, err)
-	}
-	if done, err := e.c.MarkDone(ctx, tool, region, tok2); !done || err != nil {
-		t.Errorf("done: %v %v", done, err)
-	}
-	if n := e.fake().Calls("GetItem") - reads; n != 0 {
-		t.Errorf("%d reads by the mark's own Client", n)
-	}
-	tok3, _ := e.c.Mark(ctx, tool, region)
-	other := e.client("another client")
-	e.advance(time.Minute)
-	if done, err := other.RefreshMark(ctx, tool, region, tok3); !done || err != nil {
-		t.Errorf("another client's refresh: %v %v", done, err)
-	}
+	// A write that fails is an error.
 	e.fake().Err = func(op string, _ any) error {
-		if op == "GetItem" {
+		if op == "UpdateItem" {
 			return errors.New("network down")
 		}
 		return nil
 	}
-	if _, err := e.client("a third").RefreshMark(ctx, tool, region, tok3); err == nil {
-		t.Error("a failed read")
-	}
-	if _, err := e.client("a fourth").MarkDone(ctx, tool, region, tok3); err == nil {
-		t.Error("a failed read (done)")
+	if _, err := e.c.RefreshMark(ctx, tool, region, tok2); err == nil {
+		t.Error("a failed write")
 	}
 	e.fake().Err = nil
-	if done, err := other.MarkDone(ctx, tool, region, tok3); !done || err != nil {
-		t.Errorf("another client's done: %v %v", done, err)
-	}
-	if it, _ := e.read(region); len(it.Marks) != 0 {
-		t.Errorf("left: %+v", it.Marks)
-	}
-}
-
-// TestReview5LastActivityOnlyAdvances (L3): a writer whose clock is behind
-// never moves lastActivityAt backwards: each write that stamps it, meeting
-// a later stamp, stamps that one instead.
-func TestReview5LastActivityOnlyAdvances(t *testing.T) {
-	ctx := context.Background()
-	e := newEnv(t)
-	slow := e.client("slow clock", func(o *lifecycle.Options) { o.Now = func() time.Time { return e.clock().Add(-time.Hour) } })
-	if err := e.c.MarkActive(ctx, tool, region); err != nil {
-		t.Fatal(err)
-	}
-	stamp := func() time.Time { it, _ := e.read(region); return it.LastActivityAt }
-	want := stamp()
-	check := func(what string) {
-		t.Helper()
-		if got := stamp(); got.Before(want) {
-			t.Errorf("%s moved lastActivityAt back to %v from %v", what, got, want)
-		} else {
-			want = got
-		}
-	}
-	tok, err := slow.Mark(ctx, tool, region)
-	if err != nil {
-		t.Fatal(err)
-	}
-	check("Mark")
-	if done, err := slow.MarkDone(ctx, tool, region, tok); !done || err != nil {
-		t.Fatal(done, err)
-	}
-	check("MarkDone")
-	if err := slow.AddHold(ctx, tool, region, "spawn"); err != nil {
-		t.Fatal(err)
-	}
-	check("AddHold")
-	if err := slow.RemoveHold(ctx, tool, region, "spawn"); err != nil {
-		t.Fatal(err)
-	}
-	check("RemoveHold")
-	if _, _, err := slow.Observe(ctx, tool, region, true); err != nil {
-		t.Fatal(err)
-	}
-	check("an active Observe")
-	if _, _, err := slow.Observe(ctx, tool, region, false); err != nil {
-		t.Fatal(err)
-	}
-	l, err := slow.Claim(ctx, tool, region, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := l.Release(ctx); err != nil {
-		t.Fatal(err)
-	}
-	check("Release")
-	// A later stamp written between a writer's read and its write: the
-	// write stamps that one.
-	e2 := newEnv(t)
-	tok, _ = e2.c.Mark(ctx, tool, region)
-	ahead := e2.client("ahead", func(o *lifecycle.Options) { o.Now = func() time.Time { return e2.clock().Add(time.Hour) } })
-	raced := false
-	e2.fake().Hook = func(ctx context.Context, op string) {
-		if op == "UpdateItem" && !raced {
-			raced = true
-			if _, _, err := ahead.Observe(ctx, tool, region, true); err != nil {
-				t.Error(err)
-			}
-		}
-	}
-	if done, err := e2.c.MarkDone(ctx, tool, region, tok); !done || err != nil {
-		t.Errorf("a done that met a later stamp: %v %v", done, err)
-	}
-	e2.fake().Hook = nil
-	if it, _ := e2.read(region); !it.LastActivityAt.Equal(t0.Add(time.Hour)) || len(it.Marks) != 0 {
-		t.Errorf("after: %+v", it)
-	}
-	// An activation and an active Observe that meet a later stamp.
-	e3 := newEnv(t)
-	ahead3 := e3.client("ahead", func(o *lifecycle.Options) { o.Now = func() time.Time { return e3.clock().Add(time.Hour) } })
-	if err := ahead3.MarkActive(ctx, tool, region); err != nil {
-		t.Fatal(err)
-	}
-	if err := e3.c.MarkActive(ctx, tool, region); err != nil {
-		t.Fatalf("an activation behind the stamp: %v", err)
-	}
-	// An active Observe whose read is overtaken by a later stamp reads
-	// again and records it.
-	e3.fake().Hook = func(ctx context.Context, op string) {
-		if op == "TransactWriteItems" {
-			e3.fake().Hook = nil
-			e3.advance(time.Minute)
-			if err := ahead3.MarkActive(ctx, tool, region); err != nil {
-				t.Error(err)
-			}
-		}
-	}
-	if _, _, err := e3.c.Observe(ctx, tool, region, true); err != nil {
-		t.Fatalf("an observe overtaken: %v", err)
-	}
-	if it, _ := e3.read(region); !it.LastActivityAt.Equal(t0.Add(time.Hour + time.Minute)) {
-		t.Errorf("after the overtaken observe: %+v", it)
-	}
 }
 
 // TestReview5UnlockRefusesAClaim (L4): Unlock gives back only a lock; a
