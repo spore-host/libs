@@ -18,7 +18,8 @@
 //	idleSince  RFC 3339; set by the first idle Observe, removed by any activity
 //	lease      {token, owner, heartbeat, step}: the teardown claim
 //	holds      string set: tools that depend on this one in this scope
-//	mark       {token, at}: the last creator's mark, while ACTIVE from it
+//	marks      string set: one per running creator (Mark, until MarkDone), "*" for MarkActive
+//	activeAt   RFC 3339; the last activation
 //	incomplete bool: a teardown suspended partway (Lease.Suspend)
 //	tool, scope  the item's own tool and scope, for readability
 //

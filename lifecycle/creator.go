@@ -2,8 +2,8 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -30,8 +30,7 @@ import (
 // resources: one that claims later must first see the tool idle for its
 // grace period, and one that held a lease before has lost it.
 func (c *Client) MarkActive(ctx context.Context, tool tags.Tool, scope string) error {
-	_, err := c.Mark(ctx, tool, scope)
-	return err
+	return c.activate(ctx, tool, scope, "", "")
 }
 
 // AddHold records that holder depends on tool's resources in scope (for
@@ -63,10 +62,18 @@ func (c *Client) RemoveHold(ctx context.Context, tool tags.Tool, scope string, h
 		ExpressionAttributeNames:  names(attrHolds, attrPK),
 		ExpressionAttributeValues: map[string]types.AttributeValue{":holder": ss(string(holder))},
 	})
-	if err == nil || isCCF(err) || isNotFound(err) {
+	if isCCF(err) || isNotFound(err) {
 		return nil
 	}
-	return fmt.Errorf("lifecycle: remove hold %s on %s: %w", holder, key, err)
+	if err != nil {
+		return fmt.Errorf("lifecycle: remove hold %s on %s: %w", holder, key, err)
+	}
+	// The last thing in use gone (no hold, no mark): idle from now. A table
+	// that is closing has no tool item left to idle.
+	if _, err := c.idleIfFree(ctx, a, key); err != nil && !errors.Is(err, ErrTableClosing) {
+		return fmt.Errorf("lifecycle: remove hold %s on %s: %w", holder, key, err)
+	}
+	return nil
 }
 
 // blocked is why one activation attempt could not commit.
@@ -133,8 +140,8 @@ func (c *Client) activate(ctx context.Context, tool tags.Tool, scope string, hol
 // or a conflicting transaction.
 func (c *Client) activateOnce(ctx context.Context, a API, key string, tool tags.Tool, scope string, holder tags.Tool, mark string) (*blocked, error) {
 	now := c.now()
-	upd := "SET #state = :active, #epoch = if_not_exists(#epoch, :zero) + :one, #tool = :tool, #scope = :scope REMOVE #idleSince, #lease, #incomplete"
-	nm := names(attrState, attrEpoch, attrTool, attrScope, attrIdleSince, attrLease, attrHeartbeat, attrIncomplete)
+	upd := "SET #state = :active, #epoch = if_not_exists(#epoch, :zero) + :one, #tool = :tool, #scope = :scope, #activeAt = :now REMOVE #idleSince, #lease, #incomplete"
+	nm := names(attrState, attrEpoch, attrTool, attrScope, attrIdleSince, attrLease, attrHeartbeat, attrIncomplete, attrActiveAt)
 	vals := map[string]types.AttributeValue{
 		":active": s(string(StateActive)),
 		":zero":   n(0),
@@ -143,10 +150,17 @@ func (c *Client) activateOnce(ctx context.Context, a API, key string, tool tags.
 		":scope":  s(scope),
 		":stale":  s(c.staleBefore(now)),
 	}
-	if mark != "" {
-		upd = strings.Replace(upd, " REMOVE ", ", #mark = :mark REMOVE ", 1)
-		nm["#mark"] = attrMark
-		vals[":mark"] = &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{attrToken: s(mark), attrAt: s(formatTime(now))}}
+	vals[":now"] = s(formatTime(now))
+	switch {
+	case holder != "":
+		// A hold is its own "in use": no mark (RemoveHold ends it).
+	case mark == "":
+		mark = anyActivity // MarkActive: activity a backstop judges
+		fallthrough
+	default:
+		upd += " ADD #marks :mark"
+		nm["#marks"] = attrMarks
+		vals[":mark"] = ss(mark)
 	}
 	if holder != "" {
 		upd += " ADD #holds :holder"

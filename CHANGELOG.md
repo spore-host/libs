@@ -10,9 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`lifecycle`: conditional writes, for a teardown that must act on an item only as it judged it** (lagotto#340). `Expect` (and `ExpectOf(item, exists)`) is an item's epoch, state, lease token and creator-mark token as read. `SetIdleIfUnchanged` records a tool idle (or creates the item IDLE, with its table) only if the item is still exactly that, and `ClaimIfUnchanged` claims only then (an IDLE item past its grace, or a TEARDOWN one whose lease went stale). Both return `ErrChanged` or a *NotClaimableError when a creator marked, a hold appeared or another claim landed since the read. `Observe` and `Claim` decide on their own read, so an idle Observe used to turn a creator's fresh ACTIVE mark IDLE, and the Claim after it took the item at the creator's new epoch without noticing.
-- **Creator marks with an end.** Every `MarkActive` (and `AddHold`) now writes a creator mark: a token and a time (`Item.Mark`). `Mark` is `MarkActive` returning that token, and `MarkDone(token)` ends it: the item goes IDLE, idle from that moment, unless another creator has marked since. So a scope no backstop observes, such as the global scope, is ACTIVE exactly while a creator runs. An idle `Observe` removes the mark along with ACTIVE.
-- **`Lease.Suspend`** gives a lease up after a teardown stopped partway. The item goes IDLE, marked `Item.Incomplete`, with no lease, so no creator waits for it and the next backstop resumes it. Any activity (`MarkActive`, `Mark`, an active `Observe`) clears the mark, and a claim clears it too.
+- **`lifecycle`: conditional writes**, for a teardown that must act on an item only as it judged it (lagotto#340). `Expect` (and `ExpectOf(item, exists)`) is an item's epoch, state, lease token and creator-mark tokens, as read.
+  - `SetIdleIfUnchanged` records a tool idle, or creates the item IDLE along with its table, only if the item is still exactly that. It never removes a live lease.
+  - `ClaimIfUnchanged` claims only then: an IDLE item past its grace, or a TEARDOWN item whose lease went stale.
+  - Both refuse (`ErrChanged`, or a `*NotClaimableError` saying "changed since it was judged") when a creator marked, a creator finished, a hold appeared or another claim landed since the read.
+  - `LockIfUnchanged` takes a lease without changing the item's state, a short exclusion for a backstop's maintenance; `Lease.Unlock` gives it back.
+- **"In use" with an end.** `Mark` adds a creator mark (`Item.Marks`: a set, one token and time per running creator) and returns its token. `MarkDone(token)` removes that mark. The last `MarkDone` or `RemoveHold` leaves no mark and no hold, and sets the item IDLE from that moment. A scope no backstop observes, such as the global scope, is therefore ACTIVE exactly while something uses it. lifecycle records each mark's time but sets no bound on its age: a caller that takes an old mark for a creator that died decides its own bound, and acts on it with `SetIdleIfUnchanged`. `Item.ActiveAt` is the time of the last activation.
+- **`Lease.Suspend`** gives a lease up after a teardown stopped partway. The item goes IDLE, marked `Item.Incomplete`, with no lease, so no creator waits for it, and the next backstop resumes it.
+- **`AdoptLease`** returns the live lease held in the client's own owner name, for a claim whose answer was lost, so the caller can give it back. Owner names must be unique to a run.
+- `MarkDone`, `SetIdleIfUnchanged` and the idle step of `RemoveHold` retry a throttle or a conflicting transaction.
+
+### Changed
+
+- **`MarkActive`** now records a mark, `"*"`: activity that no creator ends, which only a backstop's idle `Observe` clears. It also sets `Item.ActiveAt`, and clears a suspended teardown's `Incomplete` mark.
+- **`AddHold`** writes no creator mark. A hold is its own "in use": an earlier creator's `MarkDone` leaves an item a hold keeps ACTIVE.
+- **`RemoveHold`** sets the item IDLE when it removes the last thing in use (no hold, no mark).
+- **`Observe`**: an idle `Observe` clears every creator mark along with ACTIVE. An active one clears `Incomplete`, also on an item that is already ACTIVE.
+- **`Claim` and `Lease.Release`** clear `Incomplete`.
 
 ## [0.55.0] - 2026-11-20
 

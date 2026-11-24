@@ -31,8 +31,8 @@ const (
 	attrHeartbeat  = "heartbeat"
 	attrStep       = "step"
 	attrSince      = "since"
-	attrMark       = "mark"
-	attrAt         = "at"
+	attrMarks      = "marks"
+	attrActiveAt   = "activeAt"
 	attrIncomplete = "incomplete"
 )
 
@@ -50,18 +50,44 @@ type Item struct {
 	Lease *LeaseInfo
 	// Holds are the tools that depend on this one in this scope, sorted.
 	Holds []tags.Tool
-	// Mark is the creator mark of the last MarkActive or Mark, while the
-	// item is ACTIVE from it; nil otherwise. MarkDone with its token ends it.
-	Mark *MarkInfo
+	// Marks are the creators running in this scope (Mark), each until its
+	// MarkDone, and "*" for MarkActive's activity, which only a backstop's
+	// idle Observe ends. Sorted by token.
+	Marks []MarkInfo
+	// ActiveAt is when the item was last activated (Mark, MarkActive,
+	// AddHold), or zero.
+	ActiveAt time.Time
 	// Incomplete: a teardown stopped partway and suspended its lease
 	// (Lease.Suspend); the next backstop resumes it. Any activity clears it.
 	Incomplete bool
 }
 
-// MarkInfo is a creator mark as stored in a tool item.
+// MarkInfo is a creator mark: its token (what Mark returned; "*" for
+// MarkActive's) and when it was made (for "*", the item's ActiveAt).
+// lifecycle sets no bound on a mark's age: a caller that takes an old mark
+// for a creator that died decides its own, and acts on it only as judged
+// (SetIdleIfUnchanged).
 type MarkInfo struct {
 	Token string
 	At    time.Time
+}
+
+// anyActivity is the mark MarkActive adds: activity no creator ends.
+const anyActivity = "*"
+
+// markElement is how a mark is stored: token|at.
+func markElement(token string, at time.Time) string { return token + "|" + formatTime(at) }
+
+func decodeMark(e string, activeAt time.Time) MarkInfo {
+	if e == anyActivity {
+		return MarkInfo{Token: e, At: activeAt}
+	}
+	for i := len(e) - 1; i >= 0; i-- {
+		if e[i] == '|' {
+			return MarkInfo{Token: e, At: parseTime(e[i+1:])}
+		}
+	}
+	return MarkInfo{Token: e}
 }
 
 // LeaseInfo is a teardown claim as stored in a tool item.
@@ -109,8 +135,12 @@ func decodeItem(m map[string]types.AttributeValue) Item {
 			Step:      str(l.Value, attrStep),
 		}
 	}
-	if mk, ok := m[attrMark].(*types.AttributeValueMemberM); ok {
-		it.Mark = &MarkInfo{Token: str(mk.Value, attrToken), At: parseTime(str(mk.Value, attrAt))}
+	it.ActiveAt = parseTime(str(m, attrActiveAt))
+	if mk, ok := m[attrMarks].(*types.AttributeValueMemberSS); ok {
+		for _, e := range mk.Value {
+			it.Marks = append(it.Marks, decodeMark(e, it.ActiveAt))
+		}
+		sort.Slice(it.Marks, func(i, j int) bool { return it.Marks[i].Token < it.Marks[j].Token })
 	}
 	if b, ok := m[attrIncomplete].(*types.AttributeValueMemberBOOL); ok {
 		it.Incomplete = b.Value
