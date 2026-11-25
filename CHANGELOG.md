@@ -8,6 +8,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`lifecycle`: readers judge, writers never idle** (lagotto#340). `InUse(item, now, markBound)` and `IdleSince(item, now, markBound)` (and the same on a `Client`, with its clock and `StaleAfter`) decide from what an item holds and its times whether it is in use and since when it has been idle. For new readers they are authoritative; the state field stays for older ones.
+  - In use: a live lease; a hold; a creator mark younger than `markBound` (or with no time); a `MarkActive` younger than `markBound`; or ACTIVE from a write that recorded no times (an older client's: its state or epoch is not what this package last stamped).
+  - Idle since: the latest of `LastActivityAt`, each mark's time plus `markBound`, the last `MarkActive` plus `markBound`, and a lease's heartbeat plus `StaleAfter`; and the stored `idleSince` when an older client wrote the state last or the item has none of those times. An item a writer could not finish with (a failed `MarkDone`, a lost reply, a creator that died) ages out by itself.
+  - New attributes: `lastActivityAt`, `pulseAt` (the last `MarkActive`), `stampState` and `stampEpoch` (the state and epoch this package's last state write left), and the lease's `client`. `Options.MarkBound` (default 1 h) is how long an idle `Observe` takes a creator mark for a running creator.
+- **Conditional writes**, for a backstop or actor that must act on an item only as it judged it. `Expect` (and `ExpectOf(item, exists)`) is an item's epoch, state, lease token and `lastActivityAt`, as read. `lastActivityAt` is the one change detector: every write that changes what keeps an item in use stamps it, and every conditional idle, claim or lock (an idle `Observe`, `Claim`, `SetIdleIfUnchanged`, `ClaimIfUnchanged`, `LockIfUnchanged`) requires it unchanged.
+  - `SetIdleIfUnchanged` records a tool idle, or creates the item IDLE along with its table, only if the item is still exactly that. It never removes a live lease. When the write applied but reading it back failed, the error wraps `ErrApplied`.
+  - `ClaimIfUnchanged` claims only then: an IDLE item past its grace (with no lease or a stale one), or a TEARDOWN item whose lease went stale. A caller that judged with `IdleSince` passes grace 0.
+  - Both refuse (`ErrChanged`, or a `*NotClaimableError` saying "changed since it was judged") when a creator marked, a creator finished, a hold appeared or another claim landed since the read.
+  - `LockIfUnchanged` takes a lease without changing the item's state, a short exclusion for a backstop's maintenance; `Lease.Unlock` gives it back.
+- **Creator marks.** `Mark` adds a creator mark (`Item.Marks`, stored as a map `marks: {token: time}`, one per running creator) and returns its token, also with an error, so a mark that committed though its answer was lost can still be ended. `MarkDone(token)` removes that mark (one write, no read), stamps `lastActivityAt`, and changes nothing else. `Item.ActiveAt` is the time of the last activation.
+  - **`RefreshMark(token)`** re-stamps a mark's time, only while it is still there and no live lease is on the item. A creator that may run longer than its readers' mark bound (`Options.MarkBound`) must refresh well within it (a third, say). It reports false when the mark is gone or a teardown holds the item. One write, no read, so a CLI user's grant needs no `GetItem`.
+  - A mark with no readable time is aged from the item's `ActiveAt` or `lastActivityAt`, whichever is later, and is dead outright when the item has neither, so an idle `Observe` removes it once past the bound.
+- **`Lease.Suspend`** gives a lease up after a teardown stopped partway. The item goes IDLE, marked `Item.Incomplete`, with no lease, so no creator waits for it, and the next backstop resumes it.
+- **`AdoptLease`** returns the live lease this very `Client` took (its owner name and its own random id both match), for a claim whose answer was lost, so the caller can give it back. A `Client` with no owner (`"unknown"`) adopts nothing.
+- `MarkDone` and `SetIdleIfUnchanged` retry a throttle or a conflicting transaction.
+- `lastActivityAt` is set with each writer's own clock. Writers' clocks are assumed to agree within a few minutes (NTP, on Lambda and CLI hosts); grace and mark bounds are tens of minutes or more, so the skew is immaterial.
+- **Leases have a kind.** `Lease.Unlock` refuses a claim's lease, and `Release`, `Suspend` and `Finish` refuse a lock's (`ErrNotALock`); `RefreshMark` goes through a lock, and stops only at a teardown's claim. A lock's lease records `kind: lock`, which `AdoptLease` reads. `LockIfUnchanged` refuses a TEARDOWN item.
+- `ErrApplied` wraps the read-back error as well.
+
+### Changed
+
+- **A lease with no heartbeat, or one that is not a string, is stale** (`noLiveLease` is `NOT (heartbeat >= :stale)`), by the same rule as `LeaseStale` and `InUse`, which compare the stored strings. A writer's clock is used at the stored precision (milliseconds).
+- **`Claim` and `ClaimIfUnchanged` refuse an item a creator's mark younger than `Options.MarkBound` is on**, and `SetIdleIfUnchanged` one with such a mark or a fresh `MarkActive` pulse (`ErrInUse`, which it also returns for an item still as judged but held or leased).
+- **`RemoveHold` of a hold that is not there writes nothing.**
+- An active `Observe` whose only change would be a stamp under a minute old writes nothing.
+- A mark with no readable time is aged from the item's `ActiveAt` only.
+- `InUse` and `IdleSince` with no bound use `DefaultMarkBound` (a `Client`'s methods, its own `MarkBound`); only the `Client` methods use the Client's `StaleAfter`, as its writes do.
+- **`MarkActive`** stamps `pulseAt` and `lastActivityAt`, and clears a suspended teardown's `Incomplete` mark.
+- **`RemoveHold`** removes the hold and stamps `lastActivityAt`, nothing else. Like `MarkDone`, it succeeds while the table is closing.
+- **`Observe`**: an idle `Observe` records nothing while a creator mark younger than `Options.MarkBound` is on the item (a creator it cannot see), and clears older marks along with ACTIVE. An active one stamps `lastActivityAt` (unless the stamp is under a minute old and nothing else would change), and clears `Incomplete`.
+- **`Lease.Release`** stamps `lastActivityAt` and clears `Incomplete`. **`Claim`** clears `Incomplete`.
+- Every write that sets the state stamps `stampState` and `stampEpoch`.
+
+### Fixed
+
+- `SetIdleIfUnchanged` clears a closing sentinel a closer that died left, as an activation does, and every retry loop counts each retry toward its bound and backs off.
+- A `MarkDone` or `RefreshMark` retried after a write that had applied reports it done (a refresh not when a claim now holds the item); an empty token is no request.
+- `IdleSince` skips zero times (a lease with no heartbeat no longer ages from year 1).
+- Every read of `Options.Rand` is serialised (the Client id is made outside the Client's lock), so a Rand that is not safe for concurrent use is safe here.
+
 ## [0.55.0] - 2026-11-20
 
 ### Added

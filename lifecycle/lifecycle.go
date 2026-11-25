@@ -16,9 +16,19 @@
 //	state      ACTIVE | IDLE | TEARDOWN
 //	epoch      number, +1 on every MarkActive and AddHold
 //	idleSince  RFC 3339; set by the first idle Observe, removed by any activity
-//	lease      {token, owner, heartbeat, step}: the teardown claim
+//	lease      {token, owner, client, heartbeat, step}: the teardown claim
 //	holds      string set: tools that depend on this one in this scope
+//	marks      map token -> RFC 3339: one per running creator (Mark, refreshed by RefreshMark, until MarkDone)
+//	activeAt   RFC 3339; the last activation
+//	pulseAt    RFC 3339; the last MarkActive
+//	lastActivityAt  RFC 3339; every write that changes what keeps the item in use stamps it (the change detector)
+//	stampState, stampEpoch  the state and epoch this package's last state write left
+//	incomplete bool: a teardown suspended partway (Lease.Suspend)
 //	tool, scope  the item's own tool and scope, for readability
+//
+// Writers only add and remove what keeps an item in use, and stamp when;
+// none sets an item IDLE as a side effect. Readers judge with InUse and
+// IdleSince, which for them are authoritative over the state field.
 //
 // The sentinel, pk "table#closing", exists only while CloseTableIfEmpty is
 // deleting the table.
@@ -101,6 +111,7 @@ const (
 	DefaultWaitTimeout       = 10 * time.Minute
 	DefaultStaleAfter        = 20 * time.Minute
 	DefaultTablePollInterval = 2 * time.Second
+	DefaultMarkBound         = time.Hour
 )
 
 // State is a tool item's state.
@@ -168,6 +179,14 @@ type Options struct {
 	// TablePollInterval is how often a caller waiting for the table to become
 	// ACTIVE, or to finish deleting, checks again. Default 2 s.
 	TablePollInterval time.Duration
+
+	// MarkBound is how long an idle Observe takes a creator mark for a
+	// creator still running: while one is younger than this, an idle
+	// Observe records nothing; an older one is a creator that died, removed
+	// with the rest. A creator that may run longer refreshes its mark
+	// (RefreshMark) well within it. Readers pass their own bound to InUse
+	// and IdleSince. Default 1 h.
+	MarkBound time.Duration
 }
 
 // Client is the lease protocol over the lifecycle tables. It is safe for
@@ -175,7 +194,12 @@ type Options struct {
 type Client struct {
 	o       Options
 	mu      sync.Mutex
+	randMu  sync.Mutex // serialises reads of Options.Rand
 	clients map[string]API
+	// id is this Client's own random id (clientID), written with every
+	// lease it takes, so AdoptLease never takes another Client's lease for
+	// its own. Empty until its first lease.
+	id string
 }
 
 // New returns a Client.
@@ -206,6 +230,9 @@ func New(o Options) (*Client, error) {
 	}
 	if o.TablePollInterval <= 0 {
 		o.TablePollInterval = DefaultTablePollInterval
+	}
+	if o.MarkBound <= 0 {
+		o.MarkBound = DefaultMarkBound
 	}
 	return &Client{o: o, clients: map[string]API{}}, nil
 }
@@ -285,19 +312,63 @@ func (c *Client) target(tool tags.Tool, scope string) (API, string, string, erro
 	return a, region, ItemKey(tool, scope), nil
 }
 
-func (c *Client) now() time.Time { return c.o.Now().UTC() }
+// now is the Client's clock at the stored precision (milliseconds,
+// timeLayout): every time a writer writes or compares is this, so a time
+// read back equals the time written.
+func (c *Client) now() time.Time { return c.o.Now().UTC().Truncate(time.Millisecond) }
 
 // staleBefore is the heartbeat (or sentinel) time before which a lease is
 // stale, as of now.
 func (c *Client) staleBefore(now time.Time) string { return formatTime(now.Add(-c.o.StaleAfter)) }
 
-func (c *Client) isStale(heartbeat time.Time, now time.Time) bool {
-	return heartbeat.IsZero() || formatTime(heartbeat) < c.staleBefore(now)
+func (c *Client) isStale(t time.Time, now time.Time) bool {
+	return t.IsZero() || formatTime(t) < c.staleBefore(now)
+}
+
+// leaseLive is the one definition of a live lease, shared by every check
+// here (leaseStale, InUse) and by the noLiveLease condition: its heartbeat,
+// as stored, compares at or after now-staleAfter, as DynamoDB compares the
+// two strings. A lease with no heartbeat is stale; so is one whose heartbeat
+// is not a time and sorts before the bound (both sides compare the same
+// strings, so they agree on any value).
+func leaseLive(heartbeat string, now time.Time, staleAfter time.Duration) bool {
+	return heartbeat != "" && heartbeat >= formatTime(now.Add(-staleAfter))
+}
+
+// leaseStale is leaseLive's negation for l, at the Client's StaleAfter.
+func (c *Client) leaseStale(l *LeaseInfo, now time.Time) bool {
+	return !leaseLive(l.stored(), now, c.o.StaleAfter)
+}
+
+// clientID is this Client's own random id, made with its first lease.
+func (c *Client) clientID() (string, error) {
+	c.mu.Lock()
+	id := c.id
+	c.mu.Unlock()
+	if id != "" {
+		return id, nil
+	}
+	// Made outside the lock (Rand has its own), then set if still unset.
+	id, err := c.newToken()
+	if err != nil {
+		return "", err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.id == "" {
+		c.id = id
+	}
+	return c.id, nil
 }
 
 func (c *Client) newToken() (string, error) {
 	b := make([]byte, 16)
-	if _, err := io.ReadFull(c.o.Rand, b); err != nil {
+	// Options.Rand need not be safe for concurrent use: every read of it
+	// is serialised.
+	c.randMu.Lock()
+	_, err := io.ReadFull(c.o.Rand, b)
+	c.randMu.Unlock()
+	if err != nil {
 		return "", fmt.Errorf("lifecycle: lease token: %w", err)
 	}
 	return fmt.Sprintf("%x", b), nil

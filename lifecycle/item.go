@@ -18,20 +18,33 @@ import (
 // Attribute names. Every expression refers to them through #placeholders,
 // since several (state, step, owner) are DynamoDB reserved words.
 const (
-	attrPK        = "pk"
-	attrState     = "state"
-	attrEpoch     = "epoch"
-	attrIdleSince = "idleSince"
-	attrLease     = "lease"
-	attrHolds     = "holds"
-	attrTool      = "tool"
-	attrScope     = "scope"
-	attrToken     = "token"
-	attrOwner     = "owner"
-	attrHeartbeat = "heartbeat"
-	attrStep      = "step"
-	attrSince     = "since"
+	attrPK         = "pk"
+	attrState      = "state"
+	attrEpoch      = "epoch"
+	attrIdleSince  = "idleSince"
+	attrLease      = "lease"
+	attrHolds      = "holds"
+	attrTool       = "tool"
+	attrScope      = "scope"
+	attrToken      = "token"
+	attrOwner      = "owner"
+	attrHeartbeat  = "heartbeat"
+	attrStep       = "step"
+	attrSince      = "since"
+	attrMarks      = "marks"
+	attrActiveAt   = "activeAt"
+	attrIncomplete = "incomplete"
+	attrPulseAt    = "pulseAt"
+	attrLastActive = "lastActivityAt"
+	attrClient     = "client"
+	attrStampState = "stampState"
+	attrStampEpoch = "stampEpoch"
+	attrKind       = "kind"
 )
+
+// leaseKindLock is the lease kind LockIfUnchanged writes; a claim's lease
+// has none.
+const leaseKindLock = "lock"
 
 // Item is a tool item as read from the table.
 type Item struct {
@@ -47,14 +60,67 @@ type Item struct {
 	Lease *LeaseInfo
 	// Holds are the tools that depend on this one in this scope, sorted.
 	Holds []tags.Tool
+	// Marks are the creators running in this scope (Mark), each until its
+	// MarkDone (or until a reader takes it for a creator that died: InUse).
+	// Sorted by token.
+	Marks []MarkInfo
+	// ActiveAt is when the item was last activated (Mark, MarkActive,
+	// AddHold), or zero.
+	ActiveAt time.Time
+	// PulseAt is the last MarkActive: activity with no end of its own. It
+	// keeps the item in use for the reader's mark bound (InUse).
+	PulseAt time.Time
+	// LastActivityAt is the last change to what keeps the item in use: a
+	// mark added or removed, a hold added or removed, a MarkActive, an
+	// active Observe, a Release.
+	LastActivityAt time.Time
+	// StampState and StampEpoch are the state and epoch the last write that
+	// set the state left (every write of this package stamps them). An item
+	// whose State or Epoch differs was last changed by an older client,
+	// which records no times (InUse).
+	StampState State
+	StampEpoch int64
+	// Incomplete: a teardown stopped partway and suspended its lease
+	// (Lease.Suspend); the next backstop resumes it. Any activity clears it.
+	Incomplete bool
+}
+
+// MarkInfo is a creator mark: its token (what Mark returned) and when it was
+// committed, or last refreshed (RefreshMark). A mark stored with no time,
+// or one that cannot be read, has a zero At: InUse takes it as live for the
+// mark bound from the item's ActiveAt, and as dead when it has none.
+// lifecycle sets no bound on a mark's age: a caller that takes an old mark
+// for a creator that died decides its own, and acts on it only as judged
+// (SetIdleIfUnchanged).
+type MarkInfo struct {
+	Token string
+	At    time.Time
 }
 
 // LeaseInfo is a teardown claim as stored in a tool item.
 type LeaseInfo struct {
-	Token     string
-	Owner     string
+	Token string
+	Owner string
+	// Client is the claiming Client's own random id (AdoptLease).
+	Client string
+	// Kind is "lock" for a LockIfUnchanged lease, "" for a teardown claim.
+	Kind string
+	// hb is the heartbeat as stored, which staleness compares (leaseLive).
+	hb        string
 	Heartbeat time.Time
 	Step      string
+}
+
+// stored is the heartbeat as stored, or, for a LeaseInfo made by hand,
+// Heartbeat at the stored precision ("" for none).
+func (l *LeaseInfo) stored() string {
+	if l.hb != "" {
+		return l.hb
+	}
+	if l.Heartbeat.IsZero() {
+		return ""
+	}
+	return formatTime(l.Heartbeat)
 }
 
 // IdleFor is how long the item has been idle as of now: zero unless it is
@@ -90,9 +156,32 @@ func decodeItem(m map[string]types.AttributeValue) Item {
 		it.Lease = &LeaseInfo{
 			Token:     str(l.Value, attrToken),
 			Owner:     str(l.Value, attrOwner),
+			Client:    str(l.Value, attrClient),
+			Kind:      str(l.Value, attrKind),
+			hb:        str(l.Value, attrHeartbeat),
 			Heartbeat: parseTime(str(l.Value, attrHeartbeat)),
 			Step:      str(l.Value, attrStep),
 		}
+	}
+	it.StampState = State(str(m, attrStampState))
+	if n, ok := m[attrStampEpoch].(*types.AttributeValueMemberN); ok {
+		it.StampEpoch, _ = strconv.ParseInt(n.Value, 10, 64)
+	}
+	it.ActiveAt = parseTime(str(m, attrActiveAt))
+	it.PulseAt = parseTime(str(m, attrPulseAt))
+	it.LastActivityAt = parseTime(str(m, attrLastActive))
+	if mk, ok := m[attrMarks].(*types.AttributeValueMemberM); ok {
+		for tok, v := range mk.Value {
+			mi := MarkInfo{Token: tok}
+			if at, ok := v.(*types.AttributeValueMemberS); ok {
+				mi.At = parseTime(at.Value)
+			}
+			it.Marks = append(it.Marks, mi)
+		}
+		sort.Slice(it.Marks, func(i, j int) bool { return it.Marks[i].Token < it.Marks[j].Token })
+	}
+	if b, ok := m[attrIncomplete].(*types.AttributeValueMemberBOOL); ok {
+		it.Incomplete = b.Value
 	}
 	if h, ok := m[attrHolds].(*types.AttributeValueMemberSS); ok {
 		for _, v := range h.Value {
@@ -101,6 +190,20 @@ func decodeItem(m map[string]types.AttributeValue) Item {
 		sort.Slice(it.Holds, func(i, j int) bool { return it.Holds[i] < it.Holds[j] })
 	}
 	return it
+}
+
+// stamp is the SET clause every write that sets the state adds: the state
+// it leaves and the epoch (bumped, for an activation), so that a reader can
+// tell a write by an older client since (Item.StampState).
+func stamp(st State, bump bool, nm map[string]string, vals map[string]types.AttributeValue) string {
+	nm["#stampState"], nm["#stampEpoch"], nm["#epoch"] = attrStampState, attrStampEpoch, attrEpoch
+	vals[":stampState"], vals[":szero"] = s(string(st)), n(0)
+	e := ", #stampState = :stampState, #stampEpoch = if_not_exists(#epoch, :szero)"
+	if bump {
+		vals[":sone"] = n(1)
+		e += " + :sone"
+	}
+	return e
 }
 
 func s(v string) types.AttributeValue { return &types.AttributeValueMemberS{Value: v} }
@@ -134,7 +237,11 @@ func epochCond(e int64, vals map[string]types.AttributeValue) string {
 	return "#epoch = :epoch"
 }
 
-const noLiveLease = "(attribute_not_exists(#lease) OR #lease.#heartbeat < :stale)"
+// A lease is live only while its heartbeat is a string at or after :stale;
+// one with no heartbeat, or one that is not a string, is stale (a comparison
+// with a missing attribute, or one of another type, is false), as leaseLive
+// judges it.
+const noLiveLease = "(attribute_not_exists(#lease) OR NOT (#lease.#heartbeat >= :stale))"
 
 func (c *Client) get(ctx context.Context, a API, key string) (Item, bool, error) {
 	out, err := a.GetItem(ctx, &dynamodb.GetItemInput{
@@ -266,7 +373,7 @@ func reasonCCF(reasons []types.CancellationReason, i int) (map[string]types.Attr
 // holder is gone, which a creator or backstop may take over. An item with no
 // lease is not stale. It reads nothing and writes nothing.
 func (c *Client) LeaseStale(it Item) bool {
-	return it.Lease != nil && c.isStale(it.Lease.Heartbeat, c.now())
+	return it.Lease != nil && c.leaseStale(it.Lease, c.now())
 }
 
 // ListItems returns every tool item in region's table, of every tool and

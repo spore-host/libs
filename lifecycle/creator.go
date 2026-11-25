@@ -29,7 +29,7 @@ import (
 // resources: one that claims later must first see the tool idle for its
 // grace period, and one that held a lease before has lost it.
 func (c *Client) MarkActive(ctx context.Context, tool tags.Tool, scope string) error {
-	return c.activate(ctx, tool, scope, "")
+	return c.activate(ctx, tool, scope, "", "")
 }
 
 // AddHold records that holder depends on tool's resources in scope (for
@@ -40,11 +40,12 @@ func (c *Client) AddHold(ctx context.Context, tool tags.Tool, scope string, hold
 	if err := validate(holder, scope); err != nil {
 		return err
 	}
-	return c.activate(ctx, tool, scope, holder)
+	return c.activate(ctx, tool, scope, holder, "")
 }
 
-// RemoveHold removes holder's hold on tool in scope. Removing a hold that does
-// not exist, or from an item or table that does not exist, succeeds.
+// RemoveHold removes holder's hold on tool in scope, and stamps
+// lastActivityAt. Removing a hold that does not exist, or from an item or
+// table that does not exist, succeeds and writes nothing.
 func (c *Client) RemoveHold(ctx context.Context, tool tags.Tool, scope string, holder tags.Tool) error {
 	if err := validate(holder, scope); err != nil {
 		return err
@@ -53,13 +54,16 @@ func (c *Client) RemoveHold(ctx context.Context, tool tags.Tool, scope string, h
 	if err != nil {
 		return err
 	}
+	// Only the hold goes, and the time of the change: whether the item is
+	// still in use is the reader's to judge (InUse), so nothing is left
+	// stuck ACTIVE by a second write that did not happen.
 	_, err = a.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 		TableName:                 aws.String(TableName),
 		Key:                       keyOf(key),
-		UpdateExpression:          aws.String("DELETE #holds :holder"),
-		ConditionExpression:       aws.String("attribute_exists(#pk)"),
-		ExpressionAttributeNames:  names(attrHolds, attrPK),
-		ExpressionAttributeValues: map[string]types.AttributeValue{":holder": ss(string(holder))},
+		UpdateExpression:          aws.String("SET #lastActivityAt = :now DELETE #holds :holder"),
+		ConditionExpression:       aws.String("contains(#holds, :one)"),
+		ExpressionAttributeNames:  names(attrHolds, attrLastActive),
+		ExpressionAttributeValues: map[string]types.AttributeValue{":holder": ss(string(holder)), ":one": s(string(holder)), ":now": s(formatTime(c.now()))},
 	})
 	if err == nil || isCCF(err) || isNotFound(err) {
 		return nil
@@ -74,15 +78,23 @@ type blocked struct {
 	sentinel time.Time // the sentinel's since, when what == "sentinel"
 }
 
-func (c *Client) activate(ctx context.Context, tool tags.Tool, scope string, holder tags.Tool) error {
+// activate runs the activation. mark, when set, is a creator mark's token,
+// written with the time of the attempt that commits.
+func (c *Client) activate(ctx context.Context, tool tags.Tool, scope string, holder tags.Tool, mark string) error {
 	a, region, key, err := c.target(tool, scope)
 	if err != nil {
 		return err
 	}
 	start := c.now()
 	missing, polls := 0, 0
+	newMap := false // the item has no marks map yet: write the whole map
+	quick := false  // the last retry went at once
 	for {
-		b, err := c.activateOnce(ctx, a, key, tool, scope, holder)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		now := c.now()
+		b, err := c.activateOnce(ctx, a, key, tool, scope, holder, mark, newMap, now)
 		switch {
 		case err == nil && b == nil:
 			return nil
@@ -101,16 +113,41 @@ func (c *Client) activate(ctx context.Context, tool tags.Tool, scope string, hol
 			return fmt.Errorf("lifecycle: mark %s active: %w", key, err)
 		}
 		missing = 0
-		now := c.now()
-		if b.what == "sentinel" && !b.sentinel.IsZero() && c.isStale(b.sentinel, now) {
+		// Every retry below counts toward the wait. One that has a cause
+		// it can remove (a marks map not as the write assumed, a dead
+		// closer's sentinel) goes at once, but never twice in a row.
+		retryNow := false
+		switch {
+		case b.what == "lease" && mark != "":
+			if old := decodeItem(b.item); old.Lease == nil || c.leaseStale(old.Lease, now) {
+				v, present := b.item[attrMarks]
+				if _, isMap := v.(*types.AttributeValueMemberM); present && !isMap {
+					return fmt.Errorf("lifecycle: mark %s active: its marks attribute is not a map", key)
+				}
+				if newMap == present {
+					// The map's presence contradicts the write: write it
+					// as the item has it.
+					newMap, retryNow = !present, true
+				}
+			}
+		case b.what == "sentinel" && !b.sentinel.IsZero() && c.isStale(b.sentinel, now):
 			if err := c.clearStaleSentinel(ctx, a, now); err != nil {
 				return err
 			}
+			retryNow = true
+		}
+		now = c.now()
+		polls++
+		if retryNow && !quick {
+			// Its own cause removed: at once, once, even at the end of the
+			// wait (it is not waiting on anything).
+			quick = true
 			continue
 		}
+		quick = false
 		// Polls are counted as well as timed, so a clock that stalls cannot
 		// make the wait endless.
-		if waited := max(now.Sub(start), time.Duration(polls)*c.o.PollInterval); waited >= c.o.WaitTimeout {
+		if waited := max(now.Sub(start), time.Duration(polls-1)*c.o.PollInterval); waited >= c.o.WaitTimeout {
 			we := &WaitError{Tool: tool, Scope: scope, Waited: waited, Blocker: b.what}
 			if b.what == "lease" {
 				if l := decodeItem(b.item).Lease; l != nil {
@@ -119,7 +156,6 @@ func (c *Client) activate(ctx context.Context, tool tags.Tool, scope string, hol
 			}
 			return we
 		}
-		polls++
 		if err := c.o.Sleep(ctx, c.o.PollInterval); err != nil {
 			return err
 		}
@@ -127,12 +163,11 @@ func (c *Client) activate(ctx context.Context, tool tags.Tool, scope string, hol
 }
 
 // activateOnce runs the activation transaction once. It returns a non-nil
-// *blocked when the transaction was cancelled by the sentinel, a live lease,
-// or a conflicting transaction.
-func (c *Client) activateOnce(ctx context.Context, a API, key string, tool tags.Tool, scope string, holder tags.Tool) (*blocked, error) {
-	now := c.now()
-	upd := "SET #state = :active, #epoch = if_not_exists(#epoch, :zero) + :one, #tool = :tool, #scope = :scope REMOVE #idleSince, #lease"
-	nm := names(attrState, attrEpoch, attrTool, attrScope, attrIdleSince, attrLease, attrHeartbeat)
+// *blocked when the transaction was cancelled by the sentinel, a live lease
+// (or, for a mark, a marks map not as newMap assumed), or a conflicting
+// transaction.
+func (c *Client) activateOnce(ctx context.Context, a API, key string, tool tags.Tool, scope string, holder tags.Tool, mark string, newMap bool, now time.Time) (*blocked, error) {
+	nm := names(attrState, attrEpoch, attrTool, attrScope, attrIdleSince, attrLease, attrHeartbeat, attrIncomplete, attrActiveAt, attrLastActive)
 	vals := map[string]types.AttributeValue{
 		":active": s(string(StateActive)),
 		":zero":   n(0),
@@ -140,7 +175,30 @@ func (c *Client) activateOnce(ctx context.Context, a API, key string, tool tags.
 		":tool":   s(string(tool)),
 		":scope":  s(scope),
 		":stale":  s(c.staleBefore(now)),
+		":now":    s(formatTime(now)),
 	}
+	set := "SET #state = :active, #epoch = if_not_exists(#epoch, :zero) + :one, #tool = :tool, #scope = :scope, #activeAt = :now, " +
+		"#lastActivityAt = :now" + stamp(StateActive, true, nm, vals)
+	cond := noLiveLease
+	switch {
+	case holder != "":
+		// A hold is its own "in use" (RemoveHold ends it).
+	case mark == "":
+		// MarkActive: activity with no end of its own, in use for the
+		// reader's mark bound.
+		set += ", #pulseAt = :now"
+		nm["#pulseAt"] = attrPulseAt
+	case newMap:
+		nm["#marks"] = attrMarks
+		vals[":marks"] = &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{mark: s(formatTime(now))}}
+		set += ", #marks = :marks"
+		cond += " AND attribute_not_exists(#marks)"
+	default:
+		nm["#marks"], nm["#tok"] = attrMarks, mark
+		set += ", #marks.#tok = :now"
+		cond += " AND attribute_exists(#marks)"
+	}
+	upd := set + " REMOVE #idleSince, #lease, #incomplete"
 	if holder != "" {
 		upd += " ADD #holds :holder"
 		nm["#holds"] = attrHolds
@@ -152,7 +210,7 @@ func (c *Client) activateOnce(ctx context.Context, a API, key string, tool tags.
 			TableName:                           aws.String(TableName),
 			Key:                                 keyOf(key),
 			UpdateExpression:                    aws.String(upd),
-			ConditionExpression:                 aws.String(noLiveLease),
+			ConditionExpression:                 aws.String(cond),
 			ExpressionAttributeNames:            nm,
 			ExpressionAttributeValues:           vals,
 			ReturnValuesOnConditionCheckFailure: types.ReturnValuesOnConditionCheckFailureAllOld,
