@@ -39,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `InUse` and `IdleSince` with no bound use `DefaultMarkBound` (a `Client`'s methods, its own `MarkBound`); only the `Client` methods use the Client's `StaleAfter`, as its writes do.
 - **`MarkActive`** stamps `pulseAt` and `lastActivityAt`, and clears a suspended teardown's `Incomplete` mark.
 - **`RemoveHold`** removes the hold and stamps `lastActivityAt`, nothing else. Like `MarkDone`, it succeeds while the table is closing.
-- **`Observe`**: an idle `Observe` records nothing while a creator mark younger than `Options.MarkBound` is on the item (a creator it cannot see), and clears older marks along with ACTIVE. An active one stamps `lastActivityAt` on every call, so it now writes on every tick, and clears `Incomplete`.
+- **`Observe`**: an idle `Observe` records nothing while a creator mark younger than `Options.MarkBound` is on the item (a creator it cannot see), and clears older marks along with ACTIVE. An active one stamps `lastActivityAt` (unless the stamp is under a minute old and nothing else would change), and clears `Incomplete`.
 - **`Lease.Release`** stamps `lastActivityAt` and clears `Incomplete`. **`Claim`** clears `Incomplete`.
 - Every write that sets the state stamps `stampState` and `stampEpoch`.
 
