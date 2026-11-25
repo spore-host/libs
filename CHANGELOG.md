@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`lifecycle`: `Observe` takes over a closing sentinel a closer that died left** (libs#88). A `CloseTableIfEmpty` that died between writing its sentinel and deleting the table (or dropping the sentinel) used to make every `Observe` in that table return `ErrTableClosing` for good, so a backstop never observed again and no teardown there could start. `Observe` now removes a sentinel older than `Options.StaleAfter`, as `MarkActive`, `Mark` and `SetIdleIfUnchanged` do, and observes again after one poll interval. A sentinel that is back after each clear is removed twice at most, and then `Observe` returns `ErrTableClosing`. A live closer's sentinel, or one with no time, is left alone, and `Observe` still returns `ErrTableClosing` at once. Callers that cleared a stale sentinel themselves with `CloseTableIfEmpty` on `ErrTableClosing` no longer need to.
+
 ## [0.56.0] - 2026-11-25
 
 ### Added
