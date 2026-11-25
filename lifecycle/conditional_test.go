@@ -331,15 +331,17 @@ func TestRetries(t *testing.T) {
 			if done, err := e.c.MarkDone(ctx, tool, region, tok); !done || err != nil || n != 2 {
 				t.Errorf("MarkDone after %d failures: %v %v", n, done, err)
 			}
+			// A conflicting transaction is waited out (a throttle the SDK
+			// retries itself).
 			n = 0
 			e.fakes[region].Err = func(op string, _ any) error {
-				if op == "TransactWriteItems" && n < 2 {
+				if op == "TransactWriteItems" && n < 2 && failure == conflict {
 					n++
 					return failure
 				}
 				return nil
 			}
-			if _, err := e.c.Mark(ctx, tool, region); err != nil || n != 2 {
+			if _, err := e.c.Mark(ctx, tool, region); err != nil || (failure == conflict && n != 2) {
 				t.Errorf("Mark after %d failures: %v", n, err)
 			}
 			e2 := newEnv(t)
