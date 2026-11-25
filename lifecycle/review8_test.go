@@ -217,3 +217,25 @@ func TestReview8SetIdleGivesUpSaying(t *testing.T) {
 		t.Errorf("%v", err)
 	}
 }
+
+// TestReview8ShapeAtTheEndOfTheWait: a Mark that outwaits a lease, and then
+// meets the marks map's shape on its last attempt, corrects it rather than
+// counting it as more waiting (lagotto's model check).
+func TestReview8ShapeAtTheEndOfTheWait(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t, func(o *lifecycle.Options) {
+		o.StaleAfter, o.WaitTimeout, o.PollInterval = time.Minute, time.Minute+time.Second, 30*time.Second
+	})
+	if _, _, err := e.c.Observe(ctx, tool, region, false); err != nil {
+		t.Fatal(err)
+	}
+	e.advance(time.Hour)
+	if _, err := e.c.Claim(ctx, tool, region, 0); err != nil { // its item has no marks map
+		t.Fatal(err)
+	}
+	if _, err := e.client("creator", func(o *lifecycle.Options) {
+		o.StaleAfter, o.WaitTimeout, o.PollInterval = time.Minute, time.Minute+time.Second, 30*time.Second
+	}).Mark(ctx, tool, region); err != nil {
+		t.Errorf("a Mark that outwaited the lease: %v", err)
+	}
+}
