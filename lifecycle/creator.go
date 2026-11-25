@@ -137,9 +137,17 @@ func (c *Client) activate(ctx context.Context, tool tags.Tool, scope string, hol
 			retryNow = true
 		}
 		now = c.now()
+		polls++
+		if retryNow && !quick {
+			// Its own cause removed: at once, once, even at the end of the
+			// wait (it is not waiting on anything).
+			quick = true
+			continue
+		}
+		quick = false
 		// Polls are counted as well as timed, so a clock that stalls cannot
 		// make the wait endless.
-		if waited := max(now.Sub(start), time.Duration(polls)*c.o.PollInterval); waited >= c.o.WaitTimeout {
+		if waited := max(now.Sub(start), time.Duration(polls-1)*c.o.PollInterval); waited >= c.o.WaitTimeout {
 			we := &WaitError{Tool: tool, Scope: scope, Waited: waited, Blocker: b.what}
 			if b.what == "lease" {
 				if l := decodeItem(b.item).Lease; l != nil {
@@ -148,12 +156,6 @@ func (c *Client) activate(ctx context.Context, tool tags.Tool, scope string, hol
 			}
 			return we
 		}
-		polls++
-		if retryNow && !quick {
-			quick = true
-			continue
-		}
-		quick = false
 		if err := c.o.Sleep(ctx, c.o.PollInterval); err != nil {
 			return err
 		}
