@@ -53,9 +53,14 @@ func TestReview6MarksAreAMap(t *testing.T) {
 	if it, _ := e.read(region); len(it.Marks) != 1 || it.Marks[0].Token != b {
 		t.Errorf("after one done: %+v", it.Marks)
 	}
-	// A Mark that meets a live lease waits for it, as before.
-	l := newEnv(t).idleAndClaim(t)
-	_ = l
+	// A Mark that meets a live lease waits for it, as before, and says so.
+	e3 := newEnv(t)
+	e3.idleAndClaim(t)
+	_, err = e3.client("late").Mark(ctx, tool, region)
+	var we *lifecycle.WaitError
+	if !errors.As(err, &we) || we.Blocker != "lease" {
+		t.Errorf("a mark behind a live lease: %v", err)
+	}
 }
 
 // TestReview6OneChangeDetector (S3): an idle Observe, a Claim, a
@@ -88,7 +93,8 @@ func TestReview6OneChangeDetector(t *testing.T) {
 	if it, _ := e.read(region); len(it.Marks) != 1 || it.State != lifecycle.StateActive || !lifecycle.InUse(it, e.clock(), bound) {
 		t.Errorf("an idle observe deleted a refreshed mark: %+v", it)
 	}
-	// Claim: an IDLE item whose hold came and went between read and write.
+	// Claim: an IDLE item whose (dead) mark is ended between read and write,
+	// which moves no epoch.
 	e = newEnv(t)
 	if _, _, err := e.c.Observe(ctx, tool, region, false); err != nil {
 		t.Fatal(err)
@@ -96,12 +102,13 @@ func TestReview6OneChangeDetector(t *testing.T) {
 	if err := e.fake().PutRaw(lifecycle.TableName, map[string]types.AttributeValue{
 		"pk": &types.AttributeValueMemberS{Value: lifecycle.ItemKey(tool, region)}, "state": &types.AttributeValueMemberS{Value: "IDLE"},
 		"idleSince": &types.AttributeValueMemberS{Value: "2026-11-15T00:00:00.000Z"}, "stampState": &types.AttributeValueMemberS{Value: "IDLE"},
+		"marks": &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{"dead": &types.AttributeValueMemberS{Value: "2026-11-15T00:00:00.000Z"}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	race(e, "UpdateItem", func(ctx context.Context) {
-		if err := e.client("x").RemoveHold(ctx, tool, region, "spawn"); err != nil {
-			t.Error(err)
+		if done, err := e.client("x").MarkDone(ctx, tool, region, "dead"); !done || err != nil {
+			t.Error(done, err)
 		}
 	})
 	if _, err := e.c.Claim(ctx, tool, region, 0); !errors.Is(err, lifecycle.ErrNotClaimable) {

@@ -106,18 +106,38 @@ func TestReview5RefreshMark(t *testing.T) {
 	if it, ok := newEnv(t).read(region); ok {
 		t.Errorf("a refresh made an item: %+v", it)
 	}
-	// Under another's live lease (a lock): not refreshed.
+	// Under a backstop's short lock: refreshed (the seventh review's L2);
+	// under a teardown's live claim: not.
 	tok2, _ := e.c.Mark(ctx, tool, region)
 	it, ok = e.read(region)
 	l, err := e.client("a backstop").LockIfUnchanged(ctx, tool, region, lifecycle.ExpectOf(it, ok))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if done, err := e.c.RefreshMark(ctx, tool, region, tok2); done || err != nil {
-		t.Errorf("under a live lease: %v %v", done, err)
+	e.advance(time.Second)
+	if done, err := e.c.RefreshMark(ctx, tool, region, tok2); !done || err != nil {
+		t.Errorf("under a lock: %v %v", done, err)
 	}
 	if err := l.Unlock(ctx); err != nil {
 		t.Fatal(err)
+	}
+	ec := newEnv(t)
+	if err := ec.c.MarkActive(ctx, tool, region); err != nil {
+		t.Fatal(err)
+	}
+	if err := ec.fake().PutRaw(lifecycle.TableName, map[string]types.AttributeValue{
+		"pk": &types.AttributeValueMemberS{Value: lifecycle.ItemKey(tool, region)}, "state": &types.AttributeValueMemberS{Value: "TEARDOWN"},
+		"marks": &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{"tok4": &types.AttributeValueMemberS{Value: "2026-11-16T12:00:00.000Z"}}},
+		"lease": &types.AttributeValueMemberM{Value: map[string]types.AttributeValue{
+			"token": &types.AttributeValueMemberS{Value: "a claim"}, "heartbeat": &types.AttributeValueMemberS{Value: "2026-11-16T12:00:00.000Z"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if done, err := ec.c.RefreshMark(ctx, tool, region, "tok4"); done || err != nil {
+		t.Errorf("under a claim: %v %v", done, err)
+	}
+	if it, _ := ec.read(region); len(it.Marks) != 1 || !it.Marks[0].At.Equal(t0) {
+		t.Errorf("refreshed under a claim: %+v", it.Marks)
 	}
 	// A write that fails is an error.
 	e.fake().Err = func(op string, _ any) error {

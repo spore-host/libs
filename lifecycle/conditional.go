@@ -154,20 +154,31 @@ func (c *Client) MarkDone(ctx context.Context, tool tags.Tool, scope, token stri
 	return c.markWrite(ctx, tool, scope, token, "REMOVE #marks.#tok", "", "end mark")
 }
 
+// noLiveClaim is noLiveLease, but a lock (LockIfUnchanged) does not count.
+const noLiveClaim = "(" + noLiveLease + " OR #lease.#kind = :lock)"
+
 // RefreshMark re-stamps the creator mark token with the time now, only if it
-// is still on the item and no teardown holds the item's live lease: a
+// is still on the item and no teardown's claim holds the item's live lease
+// (a backstop's short lock does not stop it): a
 // creator that runs longer than its readers' mark bound calls it well within
 // the bound, so its mark is never taken for a creator that died. It reports
 // whether it refreshed the mark; false (with a nil error) means the mark is
 // gone (aged out and removed, or ended), or a teardown holds the item: the
 // creator should stop creating. One write, no read.
 func (c *Client) RefreshMark(ctx context.Context, tool tags.Tool, scope, token string) (bool, error) {
-	return c.markWrite(ctx, tool, scope, token, ", #marks.#tok = :now", " AND "+noLiveLease, "refresh mark")
+	return c.markWrite(ctx, tool, scope, token, ", #marks.#tok = :now", " AND "+noLiveClaim, "refresh mark")
 }
 
 // markWrite is MarkDone's and RefreshMark's one write on token's mark,
 // stamping lastActivityAt, on condition that the mark is there (and cond).
+// A retry whose earlier try may have applied (a throttle or conflict can
+// follow a write that went through) judges its CCF by the item as it is: a
+// done whose mark is gone, or a refresh whose mark has this very time, was
+// applied.
 func (c *Client) markWrite(ctx context.Context, tool tags.Tool, scope, token, upd, cond, what string) (bool, error) {
+	if token == "" {
+		return false, nil // no mark was written
+	}
 	a, _, key, err := c.target(tool, scope)
 	if err != nil {
 		return false, err
@@ -177,27 +188,44 @@ func (c *Client) markWrite(ctx context.Context, tool tags.Tool, scope, token, up
 	nm["#tok"] = token
 	vals := map[string]types.AttributeValue{":now": s(formatTime(now))}
 	if cond != "" {
-		nm["#lease"], nm["#heartbeat"] = attrLease, attrHeartbeat
-		vals[":stale"] = s(c.staleBefore(now))
+		nm["#lease"], nm["#heartbeat"], nm["#kind"] = attrLease, attrHeartbeat, attrKind
+		vals[":stale"], vals[":lock"] = s(c.staleBefore(now)), s(leaseKindLock)
 	}
 	expr := "SET #lastActivityAt = :now" + upd
 	if upd[0] != ',' {
 		expr = "SET #lastActivityAt = :now " + upd
 	}
+	retried := false
 	for attempt := 1; ; attempt++ {
 		_, err = a.UpdateItem(ctx, &dynamodb.UpdateItemInput{
-			TableName:                 aws.String(TableName),
-			Key:                       keyOf(key),
-			UpdateExpression:          aws.String(expr),
-			ConditionExpression:       aws.String("attribute_exists(#marks.#tok)" + cond),
-			ExpressionAttributeNames:  nm,
-			ExpressionAttributeValues: vals,
+			TableName:                           aws.String(TableName),
+			Key:                                 keyOf(key),
+			UpdateExpression:                    aws.String(expr),
+			ConditionExpression:                 aws.String("attribute_exists(#marks.#tok)" + cond),
+			ExpressionAttributeNames:            nm,
+			ExpressionAttributeValues:           vals,
+			ReturnValuesOnConditionCheckFailure: types.ReturnValuesOnConditionCheckFailureAllOld,
 		})
 		if err == nil || !retryable(err) || attempt == writeAttempts {
 			break
 		}
+		retried = true
 		if err := c.again(ctx); err != nil {
 			return false, err
+		}
+	}
+	var cc *types.ConditionalCheckFailedException
+	if retried && errors.As(err, &cc) {
+		old := decodeItem(cc.Item)
+		var at time.Time
+		has := false
+		for _, m := range old.Marks {
+			if m.Token == token {
+				at, has = m.At, true
+			}
+		}
+		if (cond == "" && !has) || (cond != "" && has && at.Equal(now)) {
+			return true, nil // an earlier try applied
 		}
 	}
 	switch {
@@ -269,6 +297,12 @@ func (c *Client) SetIdleIfUnchanged(ctx context.Context, tool tags.Tool, scope s
 		case cerr != nil && (!retryable(cerr) || attempt == writeAttempts):
 			return Item{}, fmt.Errorf("lifecycle: set %s idle: %w", key, cerr)
 		case cerr != nil:
+		case b.what == "sentinel" && !b.sentinel.IsZero() && c.isStale(b.sentinel, c.now()):
+			// A closer that died left it (as activate clears one).
+			if err := c.clearStaleSentinel(ctx, a, c.now()); err != nil {
+				return Item{}, err
+			}
+			continue
 		case b.what == "sentinel":
 			return Item{}, ErrTableClosing
 		case b.what == "lease":

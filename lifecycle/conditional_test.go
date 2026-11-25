@@ -22,14 +22,6 @@ func (e *env) read(scope string) (lifecycle.Item, bool) {
 	return it, ok
 }
 
-func tokens(it lifecycle.Item) []string {
-	var out []string
-	for _, m := range it.Marks {
-		out = append(out, m.Token)
-	}
-	return out
-}
-
 // bound is the mark bound the tests judge with.
 const bound = time.Hour
 
@@ -318,20 +310,37 @@ func TestRetries(t *testing.T) {
 	conflict := &types.TransactionCanceledException{Message: aws.String("conflict"),
 		CancellationReasons: []types.CancellationReason{{Code: aws.String("None")}, {Code: aws.String("TransactionConflict")}}}
 	throttle := &smithy.GenericAPIError{Code: "ThrottlingException", Message: "slow down"}
+	// An UpdateItem that meets a conflicting transaction.
+	updConflict := &smithy.GenericAPIError{Code: "TransactionConflictException", Message: "conflict"}
 	for name, failure := range map[string]error{"conflict": conflict, "throttle": throttle} {
 		t.Run(name, func(t *testing.T) {
 			e := newEnv(t)
 			tok, _ := e.c.Mark(ctx, tool, region)
 			n := 0
+			upd := throttle
+			if failure == conflict {
+				upd = updConflict
+			}
 			e.fakes[region].Err = func(op string, _ any) error {
-				if (op == "TransactWriteItems" || (op == "UpdateItem" && failure == throttle)) && n < 2 {
+				if op == "UpdateItem" && n < 2 {
+					n++
+					return upd
+				}
+				return nil
+			}
+			if done, err := e.c.MarkDone(ctx, tool, region, tok); !done || err != nil || n != 2 {
+				t.Errorf("MarkDone after %d failures: %v %v", n, done, err)
+			}
+			n = 0
+			e.fakes[region].Err = func(op string, _ any) error {
+				if op == "TransactWriteItems" && n < 2 {
 					n++
 					return failure
 				}
 				return nil
 			}
-			if done, err := e.c.MarkDone(ctx, tool, region, tok); !done || err != nil {
-				t.Errorf("MarkDone after %d failures: %v %v", n, done, err)
+			if _, err := e.c.Mark(ctx, tool, region); err != nil || n != 2 {
+				t.Errorf("Mark after %d failures: %v", n, err)
 			}
 			e2 := newEnv(t)
 			n = 0
@@ -649,7 +658,6 @@ func TestConditionalEdges(t *testing.T) {
 	if done, err := e7.c.MarkDone(ctx, tool, region, tok); !done || err != nil {
 		t.Errorf("closing: %v %v", done, err)
 	}
-	_ = tokens
 }
 
 type failingReader struct{}

@@ -286,7 +286,13 @@ func (l *Lease) Release(ctx context.Context) error {
 
 // Finish deletes the tool item once teardown is complete. Call
 // CloseTableIfEmpty after it.
+//
+// A lock's lease (LockIfUnchanged) it refuses with ErrNotALock: a lock never
+// deletes the item; give it back with Unlock.
 func (l *Lease) Finish(ctx context.Context) error {
+	if l.lock {
+		return fmt.Errorf("lifecycle: finish %s: %w", l.key, ErrNotALock)
+	}
 	return l.write(ctx, "finish", func(cond string, nm map[string]string, vals map[string]types.AttributeValue) error {
 		_, err := l.a.DeleteItem(ctx, &dynamodb.DeleteItemInput{
 			TableName:                 aws.String(TableName),

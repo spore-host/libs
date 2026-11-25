@@ -25,8 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`Lease.Suspend`** gives a lease up after a teardown stopped partway. The item goes IDLE, marked `Item.Incomplete`, with no lease, so no creator waits for it, and the next backstop resumes it.
 - **`AdoptLease`** returns the live lease this very `Client` took (its owner name and its own random id both match), for a claim whose answer was lost, so the caller can give it back. A `Client` with no owner (`"unknown"`) adopts nothing.
 - `MarkDone` and `SetIdleIfUnchanged` retry a throttle or a conflicting transaction.
+- `RemoveHold` of a hold that is not there writes nothing. `SetIdleIfUnchanged` clears a closing sentinel a closer that died left, as an activation does. A `MarkDone` or `RefreshMark` retried after a write that had applied reports it done; an empty token is no request.
 - `lastActivityAt` is set with each writer's own clock. Writers' clocks are assumed to agree within a few minutes (NTP, on Lambda and CLI hosts); grace and mark bounds are tens of minutes or more, so the skew is immaterial.
-- **Leases have a kind.** `Lease.Unlock` refuses a claim's lease, and `Release` and `Suspend` refuse a lock's (`ErrNotALock`). A lock's lease records `kind: lock`, which `AdoptLease` reads. `LockIfUnchanged` refuses a TEARDOWN item.
+- **Leases have a kind.** `Lease.Unlock` refuses a claim's lease, and `Release`, `Suspend` and `Finish` refuse a lock's (`ErrNotALock`); `RefreshMark` goes through a lock, and stops only at a teardown's claim. A lock's lease records `kind: lock`, which `AdoptLease` reads. `LockIfUnchanged` refuses a TEARDOWN item.
 - InUse, `LeaseStale` and the `noLiveLease` write condition share one definition of a live lease (at the stored millisecond precision).
 - Every read of `Options.Rand` is serialised, so a Rand that is not safe for concurrent use is safe here.
 - `ErrApplied` wraps the read-back error as well.

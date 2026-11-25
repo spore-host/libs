@@ -43,8 +43,9 @@ func (c *Client) AddHold(ctx context.Context, tool tags.Tool, scope string, hold
 	return c.activate(ctx, tool, scope, holder, "")
 }
 
-// RemoveHold removes holder's hold on tool in scope. Removing a hold that does
-// not exist, or from an item or table that does not exist, succeeds.
+// RemoveHold removes holder's hold on tool in scope, and stamps
+// lastActivityAt. Removing a hold that does not exist, or from an item or
+// table that does not exist, succeeds and writes nothing.
 func (c *Client) RemoveHold(ctx context.Context, tool tags.Tool, scope string, holder tags.Tool) error {
 	if err := validate(holder, scope); err != nil {
 		return err
@@ -60,9 +61,9 @@ func (c *Client) RemoveHold(ctx context.Context, tool tags.Tool, scope string, h
 		TableName:                 aws.String(TableName),
 		Key:                       keyOf(key),
 		UpdateExpression:          aws.String("SET #lastActivityAt = :now DELETE #holds :holder"),
-		ConditionExpression:       aws.String("attribute_exists(#pk)"),
-		ExpressionAttributeNames:  names(attrHolds, attrPK, attrLastActive),
-		ExpressionAttributeValues: map[string]types.AttributeValue{":holder": ss(string(holder)), ":now": s(formatTime(c.now()))},
+		ConditionExpression:       aws.String("contains(#holds, :one)"),
+		ExpressionAttributeNames:  names(attrHolds, attrLastActive),
+		ExpressionAttributeValues: map[string]types.AttributeValue{":holder": ss(string(holder)), ":one": s(string(holder)), ":now": s(formatTime(c.now()))},
 	})
 	if err == nil || isCCF(err) || isNotFound(err) {
 		return nil
@@ -85,10 +86,11 @@ func (c *Client) activate(ctx context.Context, tool tags.Tool, scope string, hol
 		return err
 	}
 	start := c.now()
-	missing, polls, shapes := 0, 0, 0
+	missing, polls := 0, 0
 	newMap := false // the item has no marks map yet: write the whole map
 	for {
-		b, err := c.activateOnce(ctx, a, key, tool, scope, holder, mark, newMap, c.now())
+		now := c.now()
+		b, err := c.activateOnce(ctx, a, key, tool, scope, holder, mark, newMap, now)
 		switch {
 		case err == nil && b == nil:
 			return nil
@@ -107,16 +109,19 @@ func (c *Client) activate(ctx context.Context, tool tags.Tool, scope string, hol
 			return fmt.Errorf("lifecycle: mark %s active: %w", key, err)
 		}
 		missing = 0
-		if b.what == "lease" && mark != "" && shapes < 3 {
-			// Not a live lease: the marks map was not as the write assumed
-			// (absent, or made since). Write it the other way.
-			if old := decodeItem(b.item); old.Lease == nil || c.isStale(old.Lease.Heartbeat, c.now()) {
-				_, hasMap := b.item[attrMarks].(*types.AttributeValueMemberM)
-				newMap, shapes = !hasMap, shapes+1
+		if b.what == "lease" && mark != "" {
+			// Not a live lease (as of this attempt): the marks map was not
+			// as the write assumed. Write it as the item now has it.
+			if old := decodeItem(b.item); old.Lease == nil || c.isStale(old.Lease.Heartbeat, now) {
+				v, present := b.item[attrMarks]
+				if _, isMap := v.(*types.AttributeValueMemberM); present && !isMap {
+					return fmt.Errorf("lifecycle: mark %s active: its marks attribute is not a map", key)
+				}
+				newMap = !present
 				continue
 			}
 		}
-		now := c.now()
+		now = c.now()
 		if b.what == "sentinel" && !b.sentinel.IsZero() && c.isStale(b.sentinel, now) {
 			if err := c.clearStaleSentinel(ctx, a, now); err != nil {
 				return err
