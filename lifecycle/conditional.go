@@ -225,7 +225,8 @@ func (c *Client) markWrite(ctx context.Context, tool tags.Tool, scope, token, up
 			}
 		}
 		ours := formatTime(old.LastActivityAt) == formatTime(now) // this call's stamp
-		if (cond == "" && !has && ours) || (cond != "" && has && at == formatTime(now)) {
+		claimed := old.Lease != nil && old.Lease.Kind != leaseKindLock && !c.leaseStale(old.Lease, now)
+		if (cond == "" && !has && ours) || (cond != "" && has && at == formatTime(now) && !claimed) {
 			return true, nil // an earlier try applied
 		}
 	}
@@ -250,6 +251,24 @@ func (c *Client) SetIdleIfUnchanged(ctx context.Context, tool tags.Tool, scope s
 	a, region, key, err := c.target(tool, scope)
 	if err != nil {
 		return Item{}, err
+	}
+	// As read: an item still as judged but with a creator's live mark or a
+	// fresh pulse is in use, whatever the caller judged (the same guard as
+	// the idle Observe and the claims). The write is conditional on
+	// lastActivityAt, so this read is the item it writes.
+	if e.Exists {
+		it, exists, err := c.get(ctx, a, key)
+		switch {
+		case isNotFound(err):
+			return Item{}, fmt.Errorf("lifecycle: set %s idle: the table is gone: %w", key, ErrChanged)
+		case err != nil:
+			return Item{}, fmt.Errorf("lifecycle: set %s idle: read: %w", key, err)
+		case !e.matches(it, exists):
+			return Item{}, fmt.Errorf("lifecycle: set %s idle: %w", key, ErrChanged)
+		case liveMark(it, c.now(), c.o.MarkBound),
+			!it.PulseAt.IsZero() && c.now().Sub(it.PulseAt) < c.o.MarkBound:
+			return Item{}, fmt.Errorf("lifecycle: set %s idle: a creator's mark or pulse is live: %w", key, ErrInUse)
+		}
 	}
 	start := c.now()
 	missing, cleared := 0, 0
@@ -332,9 +351,9 @@ func (c *Client) SetIdleIfUnchanged(ctx context.Context, tool tags.Tool, scope s
 }
 
 // ErrInUse is a conditional idle's refusal of an item that is still as the
-// caller judged it, but has a hold or a live lease on it: in use, not
-// changed.
-var ErrInUse = errors.New("lifecycle: the item is in use (a hold or a live lease)")
+// caller judged it, but is in use: a hold, a live lease, a creator's live
+// mark or a fresh pulse on it.
+var ErrInUse = errors.New("lifecycle: the item is in use (a hold, a live lease, or a creator's live mark or pulse)")
 
 // changedOrInUse is why a conditional idle of e was refused, from the item
 // the refusal returned: ErrInUse when it is still e but held or leased,

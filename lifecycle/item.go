@@ -88,8 +88,7 @@ type Item struct {
 // MarkInfo is a creator mark: its token (what Mark returned) and when it was
 // committed, or last refreshed (RefreshMark). A mark stored with no time,
 // or one that cannot be read, has a zero At: InUse takes it as live for the
-// mark bound from the item's ActiveAt or LastActivityAt, whichever is later,
-// and as dead when the item has neither.
+// mark bound from the item's ActiveAt, and as dead when it has none.
 // lifecycle sets no bound on a mark's age: a caller that takes an old mark
 // for a creator that died decides its own, and acts on it only as judged
 // (SetIdleIfUnchanged).

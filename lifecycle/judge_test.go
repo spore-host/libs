@@ -53,11 +53,11 @@ func TestInUseDefinition(t *testing.T) {
 		}), false},
 		{"a mark with no time, aged from a recent ActiveAt", with(stamped(lifecycle.StateIdle, 1), func(i *lifecycle.Item) {
 			i.Marks = []lifecycle.MarkInfo{{Token: "a"}}
-			i.ActiveAt, i.LastActivityAt = now.Add(-2*bound), now.Add(-time.Minute)
+			i.ActiveAt, i.LastActivityAt = now.Add(-time.Minute), now.Add(-2*bound)
 		}), true},
-		{"a mark with no time, aged from an old LastActivityAt", with(stamped(lifecycle.StateIdle, 1), func(i *lifecycle.Item) {
+		{"a mark with no time, not kept alive by a recent LastActivityAt", with(stamped(lifecycle.StateIdle, 1), func(i *lifecycle.Item) {
 			i.Marks = []lifecycle.MarkInfo{{Token: "a"}}
-			i.ActiveAt, i.LastActivityAt = now.Add(-2*bound), now.Add(-bound)
+			i.ActiveAt, i.LastActivityAt = now.Add(-2*bound), now.Add(-time.Minute)
 		}), false},
 		{"a young pulse", with(stamped(lifecycle.StateActive, 1), func(i *lifecycle.Item) { i.PulseAt = now.Add(-time.Minute) }), true},
 		{"an old pulse", with(stamped(lifecycle.StateActive, 1), func(i *lifecycle.Item) { i.PulseAt = now.Add(-bound) }), false},
@@ -393,13 +393,16 @@ func TestReviewFinding7ClaimIdleStaleLease(t *testing.T) {
 func TestReviewFinding9Applied(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
-	if err := e.c.MarkActive(ctx, tool, region); err != nil {
+	if _, _, err := e.c.Observe(ctx, tool, region, true); err != nil { // ACTIVE, no pulse
 		t.Fatal(err)
 	}
 	it, ok := e.read(region)
+	reads := 0
 	e.fake().Err = func(op string, _ any) error {
 		if op == "GetItem" {
-			return errors.New("network down")
+			if reads++; reads > 1 { // the read back, not the guard's read
+				return errors.New("network down")
+			}
 		}
 		return nil
 	}

@@ -258,6 +258,12 @@ func TestSetIdleIfUnchanged(t *testing.T) {
 	if _, err := e.c.SetIdleIfUnchanged(ctx, tool, lifecycle.ScopeGlobal, lifecycle.ExpectOf(now, ok)); !errors.Is(err, lifecycle.ErrChanged) {
 		t.Errorf("after a done: %v", err)
 	}
+	// Live, the first creator's mark keeps it (ErrInUse); dead, it goes.
+	now, ok = e.read(lifecycle.ScopeGlobal)
+	if _, err := e.c.SetIdleIfUnchanged(ctx, tool, lifecycle.ScopeGlobal, lifecycle.ExpectOf(now, ok)); !errors.Is(err, lifecycle.ErrInUse) {
+		t.Errorf("a live mark: %v", err)
+	}
+	e.advance(bound)
 	now, ok = e.read(lifecycle.ScopeGlobal)
 	if it, err := e.c.SetIdleIfUnchanged(ctx, tool, lifecycle.ScopeGlobal, lifecycle.ExpectOf(now, ok)); err != nil || it.State != lifecycle.StateIdle ||
 		len(it.Marks) != 0 {
@@ -282,7 +288,7 @@ func TestSetIdleIfUnchanged(t *testing.T) {
 	}
 	// A table that is closing.
 	e2 := newEnv(t)
-	if _, err := e2.c.Mark(ctx, tool, region); err != nil {
+	if _, _, err := e2.c.Observe(ctx, tool, region, true); err != nil {
 		t.Fatal(err)
 	}
 	it, ok = e2.read(region)
@@ -368,7 +374,16 @@ func TestRetries(t *testing.T) {
 			if _, err := e3.c.MarkDone(ctx, tool, region, tok); failure == throttle && err == nil {
 				t.Error("MarkDone never gives up")
 			}
-			if _, err := e3.c.SetIdleIfUnchanged(ctx, tool, region, lifecycle.Expect{Exists: true}); err == nil || errors.Is(err, lifecycle.ErrChanged) {
+			e3.advance(bound) // the mark dead
+			e3.fakes[region].Err = nil
+			judged3, ok3 := e3.read(region)
+			e3.fakes[region].Err = func(op string, _ any) error {
+				if op == "TransactWriteItems" {
+					return failure
+				}
+				return nil
+			}
+			if _, err := e3.c.SetIdleIfUnchanged(ctx, tool, region, lifecycle.ExpectOf(judged3, ok3)); err == nil || errors.Is(err, lifecycle.ErrChanged) {
 				t.Errorf("SetIdleIfUnchanged never gives up: %v", err)
 			}
 		})

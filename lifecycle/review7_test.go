@@ -120,7 +120,7 @@ func TestReview7MarkShapeFollowsTheItem(t *testing.T) {
 func TestReview7SetIdleClearsADeadSentinel(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
-	if err := e.c.MarkActive(ctx, tool, region); err != nil {
+	if _, _, err := e.c.Observe(ctx, tool, region, true); err != nil { // ACTIVE, with no pulse to keep it in use
 		t.Fatal(err)
 	}
 	putSentinel(t, e, t0.Add(-time.Hour))
@@ -130,7 +130,7 @@ func TestReview7SetIdleClearsADeadSentinel(t *testing.T) {
 	}
 	// A live closer's is left: closing.
 	e2 := newEnv(t)
-	if err := e2.c.MarkActive(ctx, tool, region); err != nil {
+	if _, _, err := e2.c.Observe(ctx, tool, region, true); err != nil { // ACTIVE, with no pulse to keep it in use
 		t.Fatal(err)
 	}
 	putSentinel(t, e2, t0)

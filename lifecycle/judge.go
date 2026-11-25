@@ -22,8 +22,8 @@ import "time"
 //   - a hold is on it;
 //   - a creator mark on it is younger than markBound (an older one is a
 //     creator that died). A mark with no readable time is measured from the
-//     item's ActiveAt or LastActivityAt, whichever is later, and is dead
-//     outright when the item has neither;
+//     item's ActiveAt (the activation that wrote it), and is dead outright
+//     when the item has none;
 //   - its last MarkActive (PulseAt) is younger than markBound;
 //   - it is ACTIVE from a write with no times: its State or Epoch is not
 //     what the last write of this package stamped (StampState, StampEpoch),
@@ -61,7 +61,10 @@ func IdleSince(it Item, now time.Time, markBound time.Duration) time.Time {
 	return idleSince(it, now, boundOr(markBound, DefaultMarkBound), DefaultStaleAfter)
 }
 
-// InUse is the package's InUse with the Client's own clock and StaleAfter.
+// InUse is the package's InUse with the Client's own clock and StaleAfter:
+// only the Client methods judge a lease's staleness as this Client's writes
+// do (the package functions use DefaultStaleAfter). A bound of 0 or less is
+// the Client's own MarkBound.
 func (c *Client) InUse(it Item, markBound time.Duration) bool {
 	return inUse(it, c.now(), boundOr(markBound, c.o.MarkBound), c.o.StaleAfter)
 }
@@ -85,9 +88,8 @@ func markAt(it Item, m MarkInfo) time.Time {
 	if !m.At.IsZero() {
 		return m.At
 	}
-	if it.LastActivityAt.After(it.ActiveAt) {
-		return it.LastActivityAt
-	}
+	// Only the activation that wrote it: lastActivityAt, which unrelated
+	// writes keep refreshing, would keep it from ever ageing out.
 	return it.ActiveAt
 }
 
@@ -132,7 +134,7 @@ func idleSince(it Item, now time.Time, markBound, staleAfter time.Duration) time
 	if !it.PulseAt.IsZero() {
 		later(it.PulseAt.Add(markBound))
 	}
-	if it.Lease != nil {
+	if it.Lease != nil && !it.Lease.Heartbeat.IsZero() {
 		later(it.Lease.Heartbeat.Add(staleAfter))
 	}
 	if latest.IsZero() || untimed(it) {

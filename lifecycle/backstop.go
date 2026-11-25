@@ -60,6 +60,10 @@ func (c *Client) Observe(ctx context.Context, tool tags.Tool, scope string, acti
 	}
 }
 
+// activeStampFresh is how recent an active Observe leaves lastActivityAt
+// alone, when only the stamp would change.
+const activeStampFresh = time.Minute
+
 func (c *Client) observeOnce(ctx context.Context, a API, key string, tool tags.Tool, scope string, active bool) error {
 	it, exists, err := c.get(ctx, a, key)
 	if err != nil {
@@ -70,7 +74,13 @@ func (c *Client) observeOnce(ctx context.Context, a API, key string, tool tags.T
 	var upd, cond string
 	var nm map[string]string
 	if active || len(it.Holds) > 0 {
-		// Recorded every time, so a reader's IdleSince counts from the last
+		if exists && it.State == StateActive && !untimed(it) && it.Lease == nil && it.IdleSince.IsZero() && !it.Incomplete &&
+			!it.LastActivityAt.IsZero() && now.Sub(it.LastActivityAt) < activeStampFresh {
+			// Only the stamp would change, and it is fresh: no write (a
+			// reader's IdleSince is off by under activeStampFresh).
+			return nil
+		}
+		// Recorded otherwise, so a reader's IdleSince counts from the last
 		// activity seen.
 		nm = names(attrState, attrTool, attrScope, attrIdleSince, attrLease, attrIncomplete, attrLastActive)
 		vals[":active"] = s(string(StateActive))

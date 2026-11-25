@@ -147,10 +147,11 @@ func TestReview6StampIsTheWritersClock(t *testing.T) {
 		t.Fatal(err)
 	}
 	slow := e.client("slow", func(o *lifecycle.Options) { o.Now = func() time.Time { return e.clock().Add(-time.Minute) } })
+	e.advance(3 * time.Minute) // past the fresh-stamp skip, for the slow clock too
 	if _, _, err := slow.Observe(ctx, tool, region, true); err != nil {
 		t.Fatal(err)
 	}
-	if it, _ := e.read(region); !it.LastActivityAt.Equal(t0.Add(-time.Minute)) {
+	if it, _ := e.read(region); !it.LastActivityAt.Equal(t0.Add(2 * time.Minute)) {
 		t.Errorf("stamp: %v", it.LastActivityAt)
 	}
 }

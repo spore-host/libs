@@ -77,7 +77,7 @@ func TestReview8StaleHeartbeatOneRule(t *testing.T) {
 func TestReview8SetIdleEnds(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
-	if err := e.c.MarkActive(ctx, tool, region); err != nil {
+	if _, _, err := e.c.Observe(ctx, tool, region, true); err != nil { // ACTIVE, with no pulse to keep it in use
 		t.Fatal(err)
 	}
 	it, ok := e.read(region)
@@ -201,7 +201,7 @@ func TestReview8MarkFlipsAreBounded(t *testing.T) {
 func TestReview8SetIdleGivesUpSaying(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
-	if err := e.c.MarkActive(ctx, tool, region); err != nil {
+	if _, _, err := e.c.Observe(ctx, tool, region, true); err != nil { // ACTIVE, with no pulse to keep it in use
 		t.Fatal(err)
 	}
 	it, ok := e.read(region)

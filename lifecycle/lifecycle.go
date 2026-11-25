@@ -343,12 +343,19 @@ func (c *Client) leaseStale(l *LeaseInfo, now time.Time) bool {
 // clientID is this Client's own random id, made with its first lease.
 func (c *Client) clientID() (string, error) {
 	c.mu.Lock()
+	id := c.id
+	c.mu.Unlock()
+	if id != "" {
+		return id, nil
+	}
+	// Made outside the lock (Rand has its own), then set if still unset.
+	id, err := c.newToken()
+	if err != nil {
+		return "", err
+	}
+	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.id == "" {
-		id, err := c.newToken()
-		if err != nil {
-			return "", err
-		}
 		c.id = id
 	}
 	return c.id, nil
