@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.56.0] - 2026-11-25
+
 ### Added
 
 - **`lifecycle`: readers judge, writers never idle** (lagotto#340). `InUse(item, now, markBound)` and `IdleSince(item, now, markBound)` (and the same on a `Client`, with its clock and `StaleAfter`) decide from what an item holds and its times whether it is in use and since when it has been idle. For new readers they are authoritative; the state field stays for older ones.
@@ -584,7 +586,8 @@ of this and earlier tags (`update`, `i18n`, `catalog`, `pricing` packages).
 
 ---
 
-[Unreleased]: https://github.com/spore-host/libs/compare/v0.55.0...HEAD
+[Unreleased]: https://github.com/spore-host/libs/compare/v0.56.0...HEAD
+[0.56.0]: https://github.com/spore-host/libs/compare/v0.55.0...v0.56.0
 [0.55.0]: https://github.com/spore-host/libs/compare/v0.54.0...v0.55.0
 [0.54.0]: https://github.com/spore-host/libs/compare/v0.53.0...v0.54.0
 [0.53.0]: https://github.com/spore-host/libs/compare/v0.52.0...v0.53.0
