@@ -105,9 +105,23 @@ type LeaseInfo struct {
 	// Client is the claiming Client's own random id (AdoptLease).
 	Client string
 	// Kind is "lock" for a LockIfUnchanged lease, "" for a teardown claim.
-	Kind      string
+	Kind string
+	// hb is the heartbeat as stored, which staleness compares (leaseLive).
+	hb        string
 	Heartbeat time.Time
 	Step      string
+}
+
+// stored is the heartbeat as stored, or, for a LeaseInfo made by hand,
+// Heartbeat at the stored precision ("" for none).
+func (l *LeaseInfo) stored() string {
+	if l.hb != "" {
+		return l.hb
+	}
+	if l.Heartbeat.IsZero() {
+		return ""
+	}
+	return formatTime(l.Heartbeat)
 }
 
 // IdleFor is how long the item has been idle as of now: zero unless it is
@@ -145,6 +159,7 @@ func decodeItem(m map[string]types.AttributeValue) Item {
 			Owner:     str(l.Value, attrOwner),
 			Client:    str(l.Value, attrClient),
 			Kind:      str(l.Value, attrKind),
+			hb:        str(l.Value, attrHeartbeat),
 			Heartbeat: parseTime(str(l.Value, attrHeartbeat)),
 			Step:      str(l.Value, attrStep),
 		}
@@ -223,7 +238,11 @@ func epochCond(e int64, vals map[string]types.AttributeValue) string {
 	return "#epoch = :epoch"
 }
 
-const noLiveLease = "(attribute_not_exists(#lease) OR #lease.#heartbeat < :stale)"
+// A lease is live only while its heartbeat is a string at or after :stale;
+// one with no heartbeat, or one that is not a string, is stale (a comparison
+// with a missing attribute, or one of another type, is false), as leaseLive
+// judges it.
+const noLiveLease = "(attribute_not_exists(#lease) OR NOT (#lease.#heartbeat >= :stale))"
 
 func (c *Client) get(ctx context.Context, a API, key string) (Item, bool, error) {
 	out, err := a.GetItem(ctx, &dynamodb.GetItemInput{
@@ -355,7 +374,7 @@ func reasonCCF(reasons []types.CancellationReason, i int) (map[string]types.Attr
 // holder is gone, which a creator or backstop may take over. An item with no
 // lease is not stale. It reads nothing and writes nothing.
 func (c *Client) LeaseStale(it Item) bool {
-	return it.Lease != nil && c.isStale(it.Lease.Heartbeat, c.now())
+	return it.Lease != nil && c.leaseStale(it.Lease, c.now())
 }
 
 // ListItems returns every tool item in region's table, of every tool and

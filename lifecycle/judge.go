@@ -32,7 +32,15 @@ import "time"
 //
 // An absent item (the zero Item) is not in use.
 func InUse(it Item, now time.Time, markBound time.Duration) bool {
-	return inUse(it, now, markBound, DefaultStaleAfter)
+	return inUse(it, now, boundOr(markBound, DefaultMarkBound), DefaultStaleAfter)
+}
+
+// boundOr is markBound, or def for none (<= 0).
+func boundOr(markBound, def time.Duration) time.Duration {
+	if markBound <= 0 {
+		return def
+	}
+	return markBound
 }
 
 // IdleSince is when the item, not in use at now, stopped being in use: the
@@ -50,18 +58,18 @@ func InUse(it Item, now time.Time, markBound time.Duration) bool {
 // (an absent item): callers compare now.Sub(IdleSince(...)) with their grace
 // only after InUse is false, and a zero time is idle for any grace.
 func IdleSince(it Item, now time.Time, markBound time.Duration) time.Time {
-	return idleSince(it, now, markBound, DefaultStaleAfter)
+	return idleSince(it, now, boundOr(markBound, DefaultMarkBound), DefaultStaleAfter)
 }
 
 // InUse is the package's InUse with the Client's own clock and StaleAfter.
 func (c *Client) InUse(it Item, markBound time.Duration) bool {
-	return inUse(it, c.now(), markBound, c.o.StaleAfter)
+	return inUse(it, c.now(), boundOr(markBound, c.o.MarkBound), c.o.StaleAfter)
 }
 
 // IdleSince is the package's IdleSince with the Client's own clock and
 // StaleAfter.
 func (c *Client) IdleSince(it Item, markBound time.Duration) time.Time {
-	return idleSince(it, c.now(), markBound, c.o.StaleAfter)
+	return idleSince(it, c.now(), boundOr(markBound, c.o.MarkBound), c.o.StaleAfter)
 }
 
 // untimed reports whether the item's state was last written by a client that
@@ -96,7 +104,7 @@ func liveMark(it Item, now time.Time, markBound time.Duration) bool {
 
 func inUse(it Item, now time.Time, markBound, staleAfter time.Duration) bool {
 	switch {
-	case it.Lease != nil && leaseLive(it.Lease.Heartbeat, now, staleAfter):
+	case it.Lease != nil && leaseLive(it.Lease.stored(), now, staleAfter):
 		return true
 	case len(it.Holds) > 0, liveMark(it, now, markBound):
 		return true

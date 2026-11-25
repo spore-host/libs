@@ -269,7 +269,7 @@ func TestSetIdleIfUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	held, ok := e.read(lifecycle.ScopeGlobal)
-	if _, err := e.c.SetIdleIfUnchanged(ctx, tool, lifecycle.ScopeGlobal, lifecycle.ExpectOf(held, ok)); !errors.Is(err, lifecycle.ErrChanged) {
+	if _, err := e.c.SetIdleIfUnchanged(ctx, tool, lifecycle.ScopeGlobal, lifecycle.ExpectOf(held, ok)); !errors.Is(err, lifecycle.ErrInUse) {
 		t.Errorf("a live lease: %v", err)
 	}
 	if err := l.Step(ctx, "still mine"); err != nil {

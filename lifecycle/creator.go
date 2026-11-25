@@ -88,7 +88,11 @@ func (c *Client) activate(ctx context.Context, tool tags.Tool, scope string, hol
 	start := c.now()
 	missing, polls := 0, 0
 	newMap := false // the item has no marks map yet: write the whole map
+	quick := false  // the last retry went at once
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		now := c.now()
 		b, err := c.activateOnce(ctx, a, key, tool, scope, holder, mark, newMap, now)
 		switch {
@@ -109,25 +113,30 @@ func (c *Client) activate(ctx context.Context, tool tags.Tool, scope string, hol
 			return fmt.Errorf("lifecycle: mark %s active: %w", key, err)
 		}
 		missing = 0
-		if b.what == "lease" && mark != "" {
-			// Not a live lease (as of this attempt): the marks map was not
-			// as the write assumed. Write it as the item now has it.
-			if old := decodeItem(b.item); old.Lease == nil || c.isStale(old.Lease.Heartbeat, now) {
+		// Every retry below counts toward the wait. One that has a cause
+		// it can remove (a marks map not as the write assumed, a dead
+		// closer's sentinel) goes at once, but never twice in a row.
+		retryNow := false
+		switch {
+		case b.what == "lease" && mark != "":
+			if old := decodeItem(b.item); old.Lease == nil || c.leaseStale(old.Lease, now) {
 				v, present := b.item[attrMarks]
 				if _, isMap := v.(*types.AttributeValueMemberM); present && !isMap {
 					return fmt.Errorf("lifecycle: mark %s active: its marks attribute is not a map", key)
 				}
-				newMap = !present
-				continue
+				if newMap == present {
+					// The map's presence contradicts the write: write it
+					// as the item has it.
+					newMap, retryNow = !present, true
+				}
 			}
-		}
-		now = c.now()
-		if b.what == "sentinel" && !b.sentinel.IsZero() && c.isStale(b.sentinel, now) {
+		case b.what == "sentinel" && !b.sentinel.IsZero() && c.isStale(b.sentinel, now):
 			if err := c.clearStaleSentinel(ctx, a, now); err != nil {
 				return err
 			}
-			continue
+			retryNow = true
 		}
+		now = c.now()
 		// Polls are counted as well as timed, so a clock that stalls cannot
 		// make the wait endless.
 		if waited := max(now.Sub(start), time.Duration(polls)*c.o.PollInterval); waited >= c.o.WaitTimeout {
@@ -140,6 +149,11 @@ func (c *Client) activate(ctx context.Context, tool tags.Tool, scope string, hol
 			return we
 		}
 		polls++
+		if retryNow && !quick {
+			quick = true
+			continue
+		}
+		quick = false
 		if err := c.o.Sleep(ctx, c.o.PollInterval); err != nil {
 			return err
 		}

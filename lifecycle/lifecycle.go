@@ -312,21 +312,32 @@ func (c *Client) target(tool tags.Tool, scope string) (API, string, string, erro
 	return a, region, ItemKey(tool, scope), nil
 }
 
-func (c *Client) now() time.Time { return c.o.Now().UTC() }
+// now is the Client's clock at the stored precision (milliseconds,
+// timeLayout): every time a writer writes or compares is this, so a time
+// read back equals the time written.
+func (c *Client) now() time.Time { return c.o.Now().UTC().Truncate(time.Millisecond) }
 
 // staleBefore is the heartbeat (or sentinel) time before which a lease is
 // stale, as of now.
 func (c *Client) staleBefore(now time.Time) string { return formatTime(now.Add(-c.o.StaleAfter)) }
 
-func (c *Client) isStale(heartbeat time.Time, now time.Time) bool {
-	return !leaseLive(heartbeat, now, c.o.StaleAfter)
+func (c *Client) isStale(t time.Time, now time.Time) bool {
+	return t.IsZero() || formatTime(t) < c.staleBefore(now)
 }
 
 // leaseLive is the one definition of a live lease, shared by every check
-// here (isStale, InUse) and by the noLiveLease condition: a heartbeat at or
-// after now-staleAfter, compared at the stored (millisecond) precision.
-func leaseLive(heartbeat, now time.Time, staleAfter time.Duration) bool {
-	return !heartbeat.IsZero() && formatTime(heartbeat) >= formatTime(now.Add(-staleAfter))
+// here (leaseStale, InUse) and by the noLiveLease condition: its heartbeat,
+// as stored, compares at or after now-staleAfter, as DynamoDB compares the
+// two strings. A lease with no heartbeat is stale; so is one whose heartbeat
+// is not a time and sorts before the bound (both sides compare the same
+// strings, so they agree on any value).
+func leaseLive(heartbeat string, now time.Time, staleAfter time.Duration) bool {
+	return heartbeat != "" && heartbeat >= formatTime(now.Add(-staleAfter))
+}
+
+// leaseStale is leaseLive's negation for l, at the Client's StaleAfter.
+func (c *Client) leaseStale(l *LeaseInfo, now time.Time) bool {
+	return !leaseLive(l.stored(), now, c.o.StaleAfter)
 }
 
 // clientID is this Client's own random id, made with its first lease.

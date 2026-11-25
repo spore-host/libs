@@ -23,6 +23,9 @@ const (
 
 var t0 = time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
 
+// subMillisecond is how far the clients' clock is off the millisecond.
+const subMillisecond = 456789 * time.Nanosecond
+
 // env is one test's world: a fake DynamoDB per region and a fake clock that
 // Sleep advances.
 type env struct {
@@ -54,8 +57,11 @@ func (e *env) client(owner string, mod ...func(*lifecycle.Options)) *lifecycle.C
 		},
 		ControlRegion: control,
 		Owner:         owner,
-		Now:           e.clock,
-		Rand:          rand.New(rand.NewSource(int64(len(owner)))),
+		// The clients' clock is never millisecond-aligned (the test's own
+		// clock, which the assertions use, is): every time a writer stores,
+		// or compares with what it stored, must be at the stored precision.
+		Now:  func() time.Time { return e.clock().Add(subMillisecond) },
+		Rand: rand.New(rand.NewSource(int64(len(owner)))),
 		Sleep: func(ctx context.Context, d time.Duration) error {
 			if err := ctx.Err(); err != nil {
 				return err

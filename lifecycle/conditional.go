@@ -206,7 +206,7 @@ func (c *Client) markWrite(ctx context.Context, tool tags.Tool, scope, token, up
 			ExpressionAttributeValues:           vals,
 			ReturnValuesOnConditionCheckFailure: types.ReturnValuesOnConditionCheckFailureAllOld,
 		})
-		if err == nil || !retryable(err) || attempt == writeAttempts {
+		if err == nil || !retryable(err) || attempt >= writeAttempts {
 			break
 		}
 		retried = true
@@ -214,17 +214,18 @@ func (c *Client) markWrite(ctx context.Context, tool tags.Tool, scope, token, up
 			return false, err
 		}
 	}
+	// Times compare as stored: now is at the stored precision already.
 	var cc *types.ConditionalCheckFailedException
-	if retried && errors.As(err, &cc) {
+	if retried && errors.As(err, &cc) && len(cc.Item) > 0 {
 		old := decodeItem(cc.Item)
-		var at time.Time
-		has := false
+		at, has := "", false
 		for _, m := range old.Marks {
 			if m.Token == token {
-				at, has = m.At, true
+				at, has = formatTime(m.At), true
 			}
 		}
-		if (cond == "" && !has) || (cond != "" && has && at.Equal(now)) {
+		ours := formatTime(old.LastActivityAt) == formatTime(now) // this call's stamp
+		if (cond == "" && !has && ours) || (cond != "" && has && at == formatTime(now)) {
 			return true, nil // an earlier try applied
 		}
 	}
@@ -251,8 +252,22 @@ func (c *Client) SetIdleIfUnchanged(ctx context.Context, tool tags.Tool, scope s
 		return Item{}, err
 	}
 	start := c.now()
-	missing := 0
+	missing, cleared := 0, 0
+	madeTable := false // the last attempt made the table (ensureTable waited for it)
 	for attempt := 1; ; attempt++ {
+		if attempt > 1 {
+			// Every retry counts, none goes past writeAttempts, and each
+			// backs off but the one after making the table.
+			if attempt > writeAttempts {
+				return Item{}, fmt.Errorf("lifecycle: set %s idle: gave up after %d attempts: %w", key, writeAttempts, err)
+			}
+			if !madeTable {
+				if err := c.again(ctx); err != nil {
+					return Item{}, err
+				}
+			}
+		}
+		madeTable = false
 		now := c.now()
 		nm := names(attrIdleSince, attrTool, attrScope, attrHolds, attrHeartbeat)
 		nm["#state"], nm["#marks"], nm["#lease"] = attrState, attrMarks, attrLease
@@ -260,7 +275,7 @@ func (c *Client) SetIdleIfUnchanged(ctx context.Context, tool tags.Tool, scope s
 			":tool": s(string(tool)), ":scope": s(scope), ":stale": s(c.staleBefore(now))}
 		cond := e.cond(nm, vals) + " AND attribute_not_exists(#holds) AND " + noLiveLease
 		upStamp := stamp(StateIdle, false, nm, vals)
-		_, err := a.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{TransactItems: []types.TransactWriteItem{
+		_, err = a.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{TransactItems: []types.TransactWriteItem{
 			sentinelAbsent(),
 			{Update: &types.Update{
 				TableName: aws.String(TableName),
@@ -290,30 +305,46 @@ func (c *Client) SetIdleIfUnchanged(ctx context.Context, tool tags.Tool, scope s
 			if err := c.ensureTable(ctx, a, region, tool, scope, start); err != nil {
 				return Item{}, err
 			}
+			madeTable = true
 			continue
 		}
 		b, cerr := classifyCancel(err)
 		switch {
-		case cerr != nil && (!retryable(cerr) || attempt == writeAttempts):
+		case cerr != nil && !retryable(cerr):
 			return Item{}, fmt.Errorf("lifecycle: set %s idle: %w", key, cerr)
 		case cerr != nil:
-		case b.what == "sentinel" && !b.sentinel.IsZero() && c.isStale(b.sentinel, c.now()):
+			err = cerr
+		case b.what == "sentinel" && !b.sentinel.IsZero() && c.isStale(b.sentinel, c.now()) && cleared < 2:
 			// A closer that died left it (as activate clears one).
+			cleared++
 			if err := c.clearStaleSentinel(ctx, a, c.now()); err != nil {
 				return Item{}, err
 			}
-			continue
+			err = ErrTableClosing
 		case b.what == "sentinel":
 			return Item{}, ErrTableClosing
 		case b.what == "lease":
-			return Item{}, fmt.Errorf("lifecycle: set %s idle: %w", key, ErrChanged)
-		case attempt == writeAttempts:
-			return Item{}, fmt.Errorf("lifecycle: set %s idle: transaction conflict", key)
-		}
-		if err := c.again(ctx); err != nil {
-			return Item{}, err
+			return Item{}, fmt.Errorf("lifecycle: set %s idle: %w", key, changedOrInUse(e, b.item))
+		default:
+			err = errors.New("transaction conflict")
 		}
 	}
+}
+
+// ErrInUse is a conditional idle's refusal of an item that is still as the
+// caller judged it, but has a hold or a live lease on it: in use, not
+// changed.
+var ErrInUse = errors.New("lifecycle: the item is in use (a hold or a live lease)")
+
+// changedOrInUse is why a conditional idle of e was refused, from the item
+// the refusal returned: ErrInUse when it is still e but held or leased,
+// ErrChanged otherwise.
+func changedOrInUse(e Expect, old map[string]types.AttributeValue) error {
+	it := decodeItem(old)
+	if old != nil && e.matches(it, true) && (len(it.Holds) > 0 || it.Lease != nil) {
+		return ErrInUse
+	}
+	return ErrChanged
 }
 
 // ClaimIfUnchanged takes the teardown lease as Claim does, but only if the
@@ -342,19 +373,23 @@ func (c *Client) ClaimIfUnchanged(ctx context.Context, tool tags.Tool, scope str
 		return nil, refuse("no lifecycle item")
 	case !e.matches(it, exists):
 		return nil, refuse("changed since it was judged")
+	case liveMark(it, c.now(), c.o.MarkBound):
+		// A creator still running: e pins lastActivityAt, so this read
+		// (which matches it) decides.
+		return nil, refuse("a creator's mark is live")
 	case len(it.Holds) > 0:
 		return nil, refuse(fmt.Sprintf("held by %v", it.Holds))
 	}
 	now := c.now()
 	switch {
-	case it.State == StateTeardown && it.Lease != nil && c.isStale(it.Lease.Heartbeat, now):
-	case it.State == StateIdle && (it.Lease == nil || c.isStale(it.Lease.Heartbeat, now)) && !it.IdleSince.IsZero():
+	case it.State == StateTeardown && it.Lease != nil && c.leaseStale(it.Lease, now):
+	case it.State == StateIdle && (it.Lease == nil || c.leaseStale(it.Lease, now)) && !it.IdleSince.IsZero():
 		// IDLE, with no lease or one whose holder died (a lock): the grace
 		// is the item's, whoever held a lease on it.
 		if it.IdleFor(now) < grace {
 			return nil, refuse(fmt.Sprintf("idle for %s of %s", it.IdleFor(now).Round(time.Second), grace))
 		}
-	case it.Lease != nil && !c.isStale(it.Lease.Heartbeat, now):
+	case it.Lease != nil && !c.leaseStale(it.Lease, now):
 		return nil, refuse("lease held by " + it.Lease.Owner)
 	default:
 		return nil, refuse("state is " + string(it.State))
@@ -498,7 +533,7 @@ func (c *Client) AdoptLease(ctx context.Context, tool tags.Tool, scope string) (
 	if c.o.Owner == "" || c.o.Owner == "unknown" {
 		return nil, fmt.Errorf("lifecycle: a client with no owner adopts no lease: %w", ErrLeaseLost)
 	}
-	if !exists || it.Lease == nil || it.Lease.Owner != c.o.Owner || it.Lease.Client != c.adoptID() || c.isStale(it.Lease.Heartbeat, c.now()) {
+	if !exists || it.Lease == nil || it.Lease.Owner != c.o.Owner || it.Lease.Client != c.adoptID() || c.leaseStale(it.Lease, c.now()) {
 		return nil, fmt.Errorf("lifecycle: no live lease of %s on %s: %w", c.o.Owner, key, ErrLeaseLost)
 	}
 	return &Lease{c: c, a: a, key: key, tool: tool, scope: scope, token: it.Lease.Token, lock: it.Lease.Kind == leaseKindLock}, nil

@@ -78,7 +78,7 @@ func (c *Client) observeOnce(ctx context.Context, a API, key string, tool tags.T
 		upd = "SET #state = :active, #tool = :tool, #scope = :scope, #lastActivityAt = :now" + stamp(StateActive, false, nm, vals) +
 			" REMOVE #idleSince, #lease, #incomplete"
 	} else {
-		if exists && it.Lease != nil && !c.isStale(it.Lease.Heartbeat, now) {
+		if exists && it.Lease != nil && !c.leaseStale(it.Lease, now) {
 			return nil // a teardown is in progress
 		}
 		if exists && it.State == StateIdle && !it.IdleSince.IsZero() && it.Lease == nil {
@@ -162,8 +162,12 @@ func (c *Client) Claim(ctx context.Context, tool tags.Tool, scope string, grace 
 	switch {
 	case len(it.Holds) > 0:
 		return nil, refuse(fmt.Sprintf("held by %v", it.Holds))
-	case it.Lease != nil && !c.isStale(it.Lease.Heartbeat, now):
+	case it.Lease != nil && !c.leaseStale(it.Lease, now):
 		return nil, refuse("lease held by " + it.Lease.Owner)
+	case liveMark(it, now, c.o.MarkBound):
+		// A creator still running (a mark an older backstop's idle Observe
+		// left): the condition pins lastActivityAt, so this read decides.
+		return nil, refuse("a creator's mark is live")
 	case it.State != StateIdle || it.IdleSince.IsZero():
 		return nil, refuse("state is " + string(it.State))
 	case it.IdleFor(now) < grace:
