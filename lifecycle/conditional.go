@@ -333,15 +333,22 @@ func (c *Client) SetIdleIfUnchanged(ctx context.Context, tool tags.Tool, scope s
 			return Item{}, fmt.Errorf("lifecycle: set %s idle: %w", key, cerr)
 		case cerr != nil:
 			err = cerr
-		case b.what == "sentinel" && !b.sentinel.IsZero() && c.isStale(b.sentinel, c.now()) && cleared < 2:
-			// A closer that died left it (as activate clears one).
+		case b.what == "sentinel" && c.sentinelStale(b.item, c.now()) && cleared < 2:
+			// A closer that died left it (as activate clears one); a live
+			// closer's that replaced it is closing.
 			cleared++
-			if err := c.clearStaleSentinel(ctx, a, c.now()); err != nil {
-				return Item{}, err
+			clear, clearErr := c.clearStaleSentinel(ctx, a, c.now())
+			switch {
+			case clearErr != nil && retryable(clearErr):
+				return Item{}, fmt.Errorf("lifecycle: set %s idle: %w (%w)", key, ErrTableClosing, clearErr)
+			case clearErr != nil:
+				return Item{}, fmt.Errorf("lifecycle: set %s idle: %w", key, clearErr)
+			case !clear:
+				return Item{}, fmt.Errorf("lifecycle: set %s idle: %w", key, ErrTableClosing)
 			}
 			err = ErrTableClosing
 		case b.what == "sentinel":
-			return Item{}, ErrTableClosing
+			return Item{}, fmt.Errorf("lifecycle: set %s idle: %w", key, ErrTableClosing)
 		case b.what == "lease":
 			return Item{}, fmt.Errorf("lifecycle: set %s idle: %w", key, changedOrInUse(e, b.item))
 		default:

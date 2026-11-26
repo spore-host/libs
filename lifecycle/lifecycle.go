@@ -75,8 +75,11 @@
 // 20 min, and that the participants' clocks agree to within minutes: leases,
 // grace and staleness compare RFC 3339 timestamps written by different hosts.
 // DynamoDB has no conditional DeleteTable, so CloseTableIfEmpty's window from
-// its scan to its DeleteTable is protected only by the sentinel, which a
-// creator treats as abandoned once it is 20 min old.
+// its scan to its DeleteTable is protected by the sentinel, which any writer
+// treats as abandoned once it is 20 min old: the closer reads its sentinel
+// again just before DeleteTable, and deletes only while it is still its own
+// and under StaleAfter/2 old (10 min by default), leaving one round trip
+// unprotected.
 package lifecycle
 
 import (
@@ -90,6 +93,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 
 	"github.com/spore-host/libs/tags"
 )
@@ -321,8 +325,28 @@ func (c *Client) now() time.Time { return c.o.Now().UTC().Truncate(time.Millisec
 // stale, as of now.
 func (c *Client) staleBefore(now time.Time) string { return formatTime(now.Add(-c.o.StaleAfter)) }
 
-func (c *Client) isStale(t time.Time, now time.Time) bool {
-	return t.IsZero() || formatTime(t) < c.staleBefore(now)
+// sentinelStaleCond is the condition that the closing sentinel (or an item
+// with its key) is not a live closer's: sentinelStale's rule, as DynamoDB
+// compares the stored strings (a comparison with a missing attribute, or one
+// of another type, is false). It uses #since, :stale and :future
+// (sentinelVals).
+const sentinelStaleCond = "NOT (#since >= :stale AND #since <= :future)"
+
+// sentinelVals are sentinelStaleCond's values, as of now.
+func (c *Client) sentinelVals(now time.Time) map[string]types.AttributeValue {
+	return map[string]types.AttributeValue{":stale": s(c.staleBefore(now)), ":future": s(formatTime(now.Add(c.o.StaleAfter)))}
+}
+
+// sentinelStale is the one definition of a closing sentinel no live closer
+// holds, shared by the Go side and sentinelStaleCond: a live one's since, as
+// stored, is a string from now-StaleAfter to now+StaleAfter. One older was
+// left by a closer that died (or stalled past StaleAfter); one with no since,
+// one that is not a string, and one that is not a time (it sorts outside the
+// window, or ages out of it) no live closer wrote. Each is stale, and any
+// writer or closer may take it over.
+func (c *Client) sentinelStale(item map[string]types.AttributeValue, now time.Time) bool {
+	v, ok := item[attrSince].(*types.AttributeValueMemberS)
+	return !ok || v.Value < c.staleBefore(now) || v.Value > formatTime(now.Add(c.o.StaleAfter))
 }
 
 // leaseLive is the one definition of a live lease, shared by every check

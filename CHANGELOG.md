@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`lifecycle`: `ObserveDetail`** is `Observe`, and also says whether this call created the item (`Observation.MadeItem`) or the table (`MadeTable`), even when it then fails. A backstop that finds its scope torn down while it observed can then undo only its own writes, and leave an older item, and its idle history, alone (lagotto#350).
+
+### Changed
+
+- **IAM: two new calls on `spore-host-lifecycle`.** `Observe` (and `ObserveDetail`) now calls `dynamodb:DeleteItem` on the closing sentinel's key (`table#closing`) when it finds a stale sentinel. `CloseTableIfEmpty` now calls `dynamodb:GetItem` on that key just before it deletes the table. `MarkActive`, `Mark`, `AddHold` and `SetIdleIfUnchanged` already deleted a stale sentinel in 0.56.0. A caller without one of these is refused only on that path: a stale sentinel stays, or the table is not deleted. As of this release the consumers' roles that call these methods already grant both: lagotto's poller role and spawn's TTL reaper member role. lagotto's `lagotto-cli-user` and spawn's `spore-host/spawn-user-lifecycle` grant the sentinel `DeleteItem` their marks already use, and their commands call neither method on a real table.
+
+### Fixed
+
+- **`lifecycle`: `Observe` takes over a closing sentinel a closer that died left** (libs#88). A `CloseTableIfEmpty` that died between writing its sentinel and deleting the table (or dropping the sentinel) used to make every `Observe` in that table return `ErrTableClosing` for good, so a backstop never observed again and no teardown there could start. `Observe` now removes a stale sentinel, as `MarkActive`, `Mark` and `SetIdleIfUnchanged` do, and observes again at once. One that is back is removed once more and observed past after one `Options.PollInterval`; a third is `ErrTableClosing`. So a sentinel adds at most one `PollInterval` to an `Observe`. A live closer's sentinel is left alone, and `Observe` returns `ErrTableClosing` at once, with no write and no back-off; so does a clear that finds a live closer's sentinel has replaced the stale one, or that is throttled (`SetIdleIfUnchanged` too, and `MarkActive` then waits a poll for it rather than retrying at once). Callers that cleared a stale sentinel themselves with `CloseTableIfEmpty` on `ErrTableClosing` no longer need to.
+- **`lifecycle`: `CloseTableIfEmpty` re-checks its own sentinel just before it deletes the table** (and reports a table another closer deleted meanwhile as gone, with no error). A closer that stalled for longer than `StaleAfter` between its scan and `DeleteTable` could not tell that a writer had taken its sentinel for a dead closer's and written an item since, and deleted the table with that item in it. Now, right before `DeleteTable`, it reads its sentinel again (strongly consistent) and deletes only if the sentinel is still its own (the same token and `since`) and less than `StaleAfter/2` (10 min by default) has passed since it wrote it. Otherwise it reports false: a sentinel taken over or replaced is left alone, and a closer that was too slow drops its own. DynamoDB has no conditional `DeleteTable`, so a window remains, from that read to the `DeleteTable` reaching DynamoDB. In it the sentinel is at least `StaleAfter/2` from going stale, so a writer takes it over only if the closer stalls that long there, or if the clocks are that far apart.
+- **`lifecycle`: a closing sentinel with no usable time is stale.** A sentinel whose `since` is missing, is not a string, or is not a time (it sorts outside the window from now−`StaleAfter` to now+`StaleAfter`) used to block every writer for good, and `CloseTableIfEmpty` could not replace it either. No live closer writes one, so `Observe`, `MarkActive`, `Mark`, `AddHold`, `SetIdleIfUnchanged` and `CloseTableIfEmpty` now all take it over. The Go side and the conditions apply one rule to the stored string.
+
 ## [0.56.0] - 2026-11-25
 
 ### Added

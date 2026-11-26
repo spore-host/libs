@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -73,9 +74,9 @@ func (c *Client) RemoveHold(ctx context.Context, tool tags.Tool, scope string, h
 
 // blocked is why one activation attempt could not commit.
 type blocked struct {
-	what     string // "lease", "sentinel" or "conflict"
-	item     map[string]types.AttributeValue
-	sentinel time.Time // the sentinel's since, when what == "sentinel"
+	what string // "lease", "sentinel" or "conflict"
+	// item is what cancelled it: the item, or the sentinel.
+	item map[string]types.AttributeValue
 }
 
 // activate runs the activation. mark, when set, is a creator mark's token,
@@ -130,11 +131,14 @@ func (c *Client) activate(ctx context.Context, tool tags.Tool, scope string, hol
 					newMap, retryNow = !present, true
 				}
 			}
-		case b.what == "sentinel" && !b.sentinel.IsZero() && c.isStale(b.sentinel, now):
-			if err := c.clearStaleSentinel(ctx, a, now); err != nil {
+		case b.what == "sentinel" && c.sentinelStale(b.item, now):
+			// At once only if it is gone: a live closer's that replaced it
+			// is waited for like any other.
+			clear, err := c.clearStaleSentinel(ctx, a, now)
+			if err != nil {
 				return err
 			}
-			retryNow = true
+			retryNow = clear
 		}
 		now = c.now()
 		polls++
@@ -241,7 +245,7 @@ func classifyCancel(err error) (*blocked, error) {
 		return nil, err
 	}
 	if item, ok := reasonCCF(reasons, 0); ok {
-		return &blocked{what: "sentinel", item: item, sentinel: parseTime(str(item, attrSince))}, nil
+		return &blocked{what: "sentinel", item: item}, nil
 	}
 	if item, ok := reasonCCF(reasons, 1); ok {
 		return &blocked{what: "lease", item: item}, nil
@@ -250,19 +254,26 @@ func classifyCancel(err error) (*blocked, error) {
 	return &blocked{what: "conflict"}, nil
 }
 
-// clearStaleSentinel removes a sentinel whose writer has been gone for longer
-// than Options.StaleAfter. The condition on its age means a fresh sentinel,
-// written since by a live closer, is left alone.
-func (c *Client) clearStaleSentinel(ctx context.Context, a API, now time.Time) error {
+// clearStaleSentinel removes a stale closing sentinel (sentinelStale: its
+// closer died, or no closer wrote it). The condition on it means a live
+// closer's, written since, is left alone. It reports whether the way is
+// clear: true when it removed the sentinel or none is left (or no table),
+// false when a live closer's is there.
+func (c *Client) clearStaleSentinel(ctx context.Context, a API, now time.Time) (bool, error) {
 	_, err := a.DeleteItem(ctx, &dynamodb.DeleteItemInput{
-		TableName:                 aws.String(TableName),
-		Key:                       keyOf(SentinelKey),
-		ConditionExpression:       aws.String("#since < :stale"),
-		ExpressionAttributeNames:  names(attrSince),
-		ExpressionAttributeValues: map[string]types.AttributeValue{":stale": s(c.staleBefore(now))},
+		TableName:                           aws.String(TableName),
+		Key:                                 keyOf(SentinelKey),
+		ConditionExpression:                 aws.String("attribute_exists(#pk) AND " + sentinelStaleCond),
+		ExpressionAttributeNames:            names(attrPK, attrSince),
+		ExpressionAttributeValues:           c.sentinelVals(now),
+		ReturnValuesOnConditionCheckFailure: types.ReturnValuesOnConditionCheckFailureAllOld,
 	})
-	if err == nil || isCCF(err) || isNotFound(err) {
-		return nil
+	var cc *types.ConditionalCheckFailedException
+	switch {
+	case err == nil, isNotFound(err):
+		return true, nil
+	case errors.As(err, &cc):
+		return len(cc.Item) == 0, nil // gone already, or a live closer's
 	}
-	return fmt.Errorf("lifecycle: remove stale closing sentinel: %w", err)
+	return false, fmt.Errorf("lifecycle: remove stale closing sentinel: %w", err)
 }

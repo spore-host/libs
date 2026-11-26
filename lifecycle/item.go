@@ -291,7 +291,8 @@ var (
 	// the tool is not (or is no longer) eligible for teardown.
 	ErrNotClaimable = errors.New("lifecycle: not claimable")
 
-	// ErrTableClosing is returned by Observe when the table is being deleted.
+	// ErrTableClosing is returned by Observe when the table is being deleted
+	// (a live closer's sentinel; Observe removes a dead closer's itself).
 	// Observe again on the next tick.
 	ErrTableClosing = errors.New("lifecycle: the lifecycle table is being deleted")
 )

@@ -31,32 +31,93 @@ import (
 // Observe creates the table and the item if they do not exist.
 //
 // It returns the item as it now stands and how long the tool has been idle.
-// While the table is being deleted it returns ErrTableClosing; observe again
-// on the next tick.
+// While the table is being deleted (a live closer's sentinel) it returns
+// ErrTableClosing at once; observe again on the next tick. A stale sentinel
+// (older than Options.StaleAfter, its closer dead or stalled, or one with no
+// time: see CloseTableIfEmpty) Observe removes, as MarkActive and
+// SetIdleIfUnchanged do, and observes again at once. One that is back is
+// removed once more and observed past after one Options.PollInterval; a third
+// is ErrTableClosing. So a sentinel adds at most one PollInterval to an
+// Observe.
 func (c *Client) Observe(ctx context.Context, tool tags.Tool, scope string, active bool) (Item, time.Duration, error) {
+	o, err := c.ObserveDetail(ctx, tool, scope, active)
+	return o.Item, o.IdleFor, err
+}
+
+// Observation is what one Observe did.
+type Observation struct {
+	// Item is the item as it now stands, and IdleFor how long the tool has
+	// been idle (Observe's results).
+	Item    Item
+	IdleFor time.Duration
+	// MadeItem: this call created the item (it was absent when the write
+	// that made it read it). MadeTable: this call created the table.
+	MadeItem, MadeTable bool
+}
+
+// ObserveDetail is Observe, and says what of the item and the table this
+// call made itself, for a backstop that must undo only its own writes (one
+// that finds its scope torn down under it). On an error, the Observation
+// still says what the call made before it failed.
+func (c *Client) ObserveDetail(ctx context.Context, tool tags.Tool, scope string, active bool) (Observation, error) {
+	var o Observation
 	a, region, key, err := c.target(tool, scope)
 	if err != nil {
-		return Item{}, 0, err
+		return o, err
 	}
 	start := c.now()
-	for attempt := 1; ; attempt++ {
-		err := c.observeOnce(ctx, a, key, tool, scope, active)
+	missing, cleared := 0, 0
+	for {
+		closing, made, err := c.observeOnce(ctx, a, key, tool, scope, active)
+		o.MadeItem = o.MadeItem || made
 		var it Item
-		if err == nil {
+		if err == nil && closing == nil {
 			it, _, err = c.get(ctx, a, key)
 		}
-		if isNotFound(err) && attempt < 3 {
+		if isNotFound(err) && missing < 2 {
 			// No table, or it was deleted under us: create it and observe
 			// again.
-			if err := c.ensureTable(ctx, a, region, tool, scope, start); err != nil {
-				return Item{}, 0, err
+			missing++
+			madeTable, err := c.ensureTableMade(ctx, a, region, tool, scope, start)
+			o.MadeTable = o.MadeTable || madeTable
+			if err != nil {
+				return o, err
 			}
 			continue
 		}
-		if err != nil {
-			return Item{}, 0, fmt.Errorf("lifecycle: observe %s: %w", key, err)
+		if closing != nil && c.sentinelStale(closing.item, c.now()) && cleared < 2 {
+			// A closer that died left it (libs#88): remove it and observe
+			// again, at once the first time and a poll later the second.
+			// Each clear counts toward the bound; one that finds a live
+			// closer's sentinel in its place is ErrTableClosing at once.
+			cleared++
+			clear, err := c.clearStaleSentinel(ctx, a, c.now())
+			switch {
+			case err != nil && retryable(err):
+				// The table is still closing, as far as this call knows: the
+				// next one tries again.
+				return o, fmt.Errorf("lifecycle: observe %s: %w (%w)", key, ErrTableClosing, err)
+			case err != nil:
+				return o, fmt.Errorf("lifecycle: observe %s: %w", key, err)
+			}
+			if clear {
+				if cleared > 1 {
+					if err := c.again(ctx); err != nil {
+						return o, fmt.Errorf("lifecycle: observe %s: %w", key, err)
+					}
+				}
+				start = c.now() // a table's wait counts from here
+				continue
+			}
 		}
-		return it, it.IdleFor(c.now()), nil
+		if closing != nil {
+			err = ErrTableClosing
+		}
+		if err != nil {
+			return o, fmt.Errorf("lifecycle: observe %s: %w", key, err)
+		}
+		o.Item, o.IdleFor = it, it.IdleFor(c.now())
+		return o, nil
 	}
 }
 
@@ -64,10 +125,13 @@ func (c *Client) Observe(ctx context.Context, tool tags.Tool, scope string, acti
 // alone, when only the stamp would change.
 const activeStampFresh = time.Minute
 
-func (c *Client) observeOnce(ctx context.Context, a API, key string, tool tags.Tool, scope string, active bool) error {
+// observeOnce runs one observation. It returns a non-nil *blocked (a
+// "sentinel") when the closing sentinel cancelled the write: the table is
+// closing; and made, when its write created the item.
+func (c *Client) observeOnce(ctx context.Context, a API, key string, tool tags.Tool, scope string, active bool) (closing *blocked, made bool, err error) {
 	it, exists, err := c.get(ctx, a, key)
 	if err != nil {
-		return err
+		return nil, false, err
 	}
 	now := c.now()
 	vals := map[string]types.AttributeValue{":tool": s(string(tool)), ":scope": s(scope)}
@@ -78,7 +142,7 @@ func (c *Client) observeOnce(ctx context.Context, a API, key string, tool tags.T
 			!it.LastActivityAt.IsZero() && now.Sub(it.LastActivityAt) < activeStampFresh {
 			// Only the stamp would change, and it is fresh: no write (a
 			// reader's IdleSince is off by under activeStampFresh).
-			return nil
+			return nil, false, nil
 		}
 		// Recorded otherwise, so a reader's IdleSince counts from the last
 		// activity seen.
@@ -89,16 +153,16 @@ func (c *Client) observeOnce(ctx context.Context, a API, key string, tool tags.T
 			" REMOVE #idleSince, #lease, #incomplete"
 	} else {
 		if exists && it.Lease != nil && !c.leaseStale(it.Lease, now) {
-			return nil // a teardown is in progress
+			return nil, false, nil // a teardown is in progress
 		}
 		if exists && it.State == StateIdle && !it.IdleSince.IsZero() && it.Lease == nil {
-			return nil // already idle; keep the first idleSince
+			return nil, false, nil // already idle; keep the first idleSince
 		}
 		if exists && liveMark(it, now, c.o.MarkBound) {
 			// A creator is running (one the backstop cannot see): record
 			// nothing. A mark older than MarkBound is a creator that died,
 			// and is removed with the rest.
-			return nil
+			return nil, false, nil
 		}
 		nm = names(attrState, attrIdleSince, attrTool, attrScope, attrLease, attrEpoch, attrHolds, attrHeartbeat, attrMarks)
 		vals[":idle"] = s(string(StateIdle))
@@ -122,21 +186,21 @@ func (c *Client) observeOnce(ctx context.Context, a API, key string, tool tags.T
 	}
 	_, err = a.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{TransactItems: []types.TransactWriteItem{sentinelAbsent(), {Update: u}}})
 	if err == nil {
-		return nil
+		return nil, !exists, nil
 	}
 	b, err := classifyCancel(err)
 	switch {
 	case err != nil:
-		return err
+		return nil, false, err
 	case b.what == "sentinel":
-		return ErrTableClosing
+		return b, false, nil
 	case b.what == "lease":
 		// The item changed since it was read: a creator bumped the epoch,
 		// a hold appeared, or a teardown claimed it. Whatever happened is
 		// newer than this observation, so record nothing.
-		return nil
+		return nil, false, nil
 	default:
-		return errors.New("transaction conflict")
+		return nil, false, errors.New("transaction conflict")
 	}
 }
 
