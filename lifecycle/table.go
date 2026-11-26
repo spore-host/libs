@@ -49,6 +49,14 @@ func (c *Client) createTableInput(region string) *dynamodb.CreateTableInput {
 // ResourceInUseException, which is fine. It gives up with a *WaitError once
 // start is Options.WaitTimeout ago.
 func (c *Client) ensureTable(ctx context.Context, a API, region string, tool tags.Tool, scope string, start time.Time) error {
+	_, err := c.ensureTableMade(ctx, a, region, tool, scope, start)
+	return err
+}
+
+// ensureTableMade is ensureTable, and reports whether this call created the
+// table (its CreateTable succeeded; one another caller won reports false).
+func (c *Client) ensureTableMade(ctx context.Context, a API, region string, tool tags.Tool, scope string, start time.Time) (bool, error) {
+	made := false
 	for polls := 0; ; polls++ {
 		out, err := a.DescribeTable(ctx, &dynamodb.DescribeTableInput{TableName: aws.String(TableName)})
 		status := types.TableStatus("")
@@ -56,29 +64,30 @@ func (c *Client) ensureTable(ctx context.Context, a API, region string, tool tag
 		case isNotFound(err):
 			created, err := a.CreateTable(ctx, c.createTableInput(region))
 			if err != nil && !isInUse(err) {
-				return fmt.Errorf("lifecycle: create %s in %s: %w", TableName, region, err)
+				return made, fmt.Errorf("lifecycle: create %s in %s: %w", TableName, region, err)
 			}
+			made = made || err == nil
 			status = types.TableStatusCreating
 			if err == nil && created != nil && created.TableDescription != nil && created.TableDescription.TableStatus != "" {
 				status = created.TableDescription.TableStatus
 			}
 		case err != nil:
-			return fmt.Errorf("lifecycle: describe %s in %s: %w", TableName, region, err)
+			return made, fmt.Errorf("lifecycle: describe %s in %s: %w", TableName, region, err)
 		case out != nil && out.Table != nil:
 			status = out.Table.TableStatus
 		}
 		switch status {
 		case types.TableStatusActive, types.TableStatusUpdating:
-			return nil
+			return made, nil
 		case types.TableStatusCreating, types.TableStatusDeleting:
 		default:
-			return fmt.Errorf("lifecycle: %s in %s is %q", TableName, region, status)
+			return made, fmt.Errorf("lifecycle: %s in %s is %q", TableName, region, status)
 		}
 		if waited := max(c.now().Sub(start), time.Duration(polls)*c.o.TablePollInterval); waited >= c.o.WaitTimeout {
-			return &WaitError{Tool: tool, Scope: scope, Waited: waited, Blocker: "table " + string(status)}
+			return made, &WaitError{Tool: tool, Scope: scope, Waited: waited, Blocker: "table " + string(status)}
 		}
 		if err := c.o.Sleep(ctx, c.o.TablePollInterval); err != nil {
-			return err
+			return made, err
 		}
 	}
 }
@@ -129,12 +138,7 @@ func (c *Client) CloseTableIfEmpty(ctx context.Context, region string) (bool, er
 	})
 	switch {
 	case isNotFound(err):
-		// Absent, or mid-transition: only absent counts as gone.
-		_, derr := a.DescribeTable(ctx, &dynamodb.DescribeTableInput{TableName: aws.String(TableName)})
-		if isNotFound(derr) {
-			return true, nil
-		}
-		return false, nil
+		return c.tableGone(ctx, a), nil
 	case isCCF(err):
 		return false, nil // another caller is closing it
 	case err != nil:
@@ -152,6 +156,8 @@ func (c *Client) CloseTableIfEmpty(ctx context.Context, region string) (bool, er
 	// still well within StaleAfter of writing it.
 	out, err := a.GetItem(ctx, &dynamodb.GetItemInput{TableName: aws.String(TableName), Key: keyOf(SentinelKey), ConsistentRead: aws.Bool(true)})
 	switch {
+	case isNotFound(err):
+		return c.tableGone(ctx, a), nil // another closer deleted it meanwhile
 	case err != nil:
 		return false, c.dropSentinel(ctx, a, token, fmt.Errorf("lifecycle: re-read the closing sentinel in %s: %w", region, err))
 	case out == nil || str(out.Item, attrToken) != token || str(out.Item, attrSince) != since:
@@ -166,6 +172,13 @@ func (c *Client) CloseTableIfEmpty(ctx context.Context, region string) (bool, er
 		return false, c.dropSentinel(ctx, a, token, fmt.Errorf("lifecycle: delete %s in %s: %w", TableName, region, err))
 	}
 	return true, nil
+}
+
+// tableGone reports, after a ResourceNotFound, whether the table is gone:
+// only absent counts (one mid-transition, CREATING or DELETING, does not).
+func (c *Client) tableGone(ctx context.Context, a API) bool {
+	_, err := a.DescribeTable(ctx, &dynamodb.DescribeTableInput{TableName: aws.String(TableName)})
+	return isNotFound(err)
 }
 
 // countItems counts the items other than the sentinel, with a strongly

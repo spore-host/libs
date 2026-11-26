@@ -512,3 +512,124 @@ func TestSetIdleClearMeetsALiveCloser(t *testing.T) {
 		t.Errorf("%d attempts, want 2 (none at once behind the live closer)", n)
 	}
 }
+
+// TestCloseRecheckFindsTheTableGone (#91 re-review L1): a re-read that finds
+// the table gone (another closer deleted it meanwhile) reports it gone, with
+// no error; one mid-delete is not gone yet.
+func TestCloseRecheckFindsTheTableGone(t *testing.T) {
+	ctx := context.Background()
+	for _, delay := range []int{0, 3} {
+		e := newEnv(t)
+		if err := e.c.MarkActive(ctx, tool, region); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.fake().DeleteItem(ctx, delInput(lifecycle.ItemKey(tool, region))); err != nil {
+			t.Fatal(err)
+		}
+		e.fake().DeleteDelay = delay
+		e.fake().Hook = func(ctx context.Context, op string) {
+			if op == "GetItem" { // the re-read
+				e.fake().Hook = nil
+				if _, err := e.fake().DeleteTable(ctx, &dynamodb.DeleteTableInput{TableName: aws.String(lifecycle.TableName)}); err != nil {
+					t.Error(err)
+				}
+			}
+		}
+		gone, err := e.c.CloseTableIfEmpty(ctx, region)
+		if err != nil || gone != (delay == 0) {
+			t.Errorf("delay %d: %v %v", delay, gone, err)
+		}
+	}
+}
+
+// TestClearThrottledIsClosing (#91 re-review L3, L4): a clear that is
+// throttled leaves the table closing, as far as the call knows: Observe's
+// and SetIdleIfUnchanged's errors are ErrTableClosing, and carry the
+// throttle; SetIdleIfUnchanged's name the item.
+func TestClearThrottledIsClosing(t *testing.T) {
+	ctx := context.Background()
+	throttle := &types.ProvisionedThroughputExceededException{Message: aws.String("slow down")}
+	for _, op := range []string{"Observe", "SetIdleIfUnchanged"} {
+		e := newEnv(t)
+		if _, _, err := e.c.Observe(ctx, tool, region, true); err != nil {
+			t.Fatal(err)
+		}
+		it, ok := e.read(region)
+		putSentinel(t, e, t0.Add(-time.Hour))
+		e.fake().Err = func(o string, _ any) error {
+			if o == "DeleteItem" {
+				return throttle
+			}
+			return nil
+		}
+		var err error
+		if op == "Observe" {
+			_, _, err = e.c.Observe(ctx, tool, region, false)
+		} else {
+			_, err = e.c.SetIdleIfUnchanged(ctx, tool, region, lifecycle.ExpectOf(it, ok))
+		}
+		var pe *types.ProvisionedThroughputExceededException
+		if !errors.Is(err, lifecycle.ErrTableClosing) || !errors.As(err, &pe) {
+			t.Errorf("%s: %v", op, err)
+		}
+		if op == "SetIdleIfUnchanged" && !strings.Contains(err.Error(), "lifecycle: set "+lifecycle.ItemKey(tool, region)+" idle: ") {
+			t.Errorf("%s: %v", op, err)
+		}
+	}
+	// A live closer's, in SetIdleIfUnchanged: named too.
+	e := newEnv(t)
+	if _, _, err := e.c.Observe(ctx, tool, region, true); err != nil {
+		t.Fatal(err)
+	}
+	it, ok := e.read(region)
+	putSentinel(t, e, e.clock())
+	if _, err := e.c.SetIdleIfUnchanged(ctx, tool, region, lifecycle.ExpectOf(it, ok)); !errors.Is(err, lifecycle.ErrTableClosing) ||
+		!strings.Contains(err.Error(), "lifecycle: set "+lifecycle.ItemKey(tool, region)+" idle: ") {
+		t.Errorf("a live closer: %v", err)
+	}
+}
+
+// TestObserveDetail: what of the item and the table one Observe made itself,
+// also when it fails after making the table.
+func TestObserveDetail(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	o, err := e.c.ObserveDetail(ctx, tool, region, false)
+	if err != nil || !o.MadeItem || !o.MadeTable || o.Item.State != lifecycle.StateIdle {
+		t.Errorf("no table: %+v %v", o, err)
+	}
+	if o, err = e.c.ObserveDetail(ctx, tool, region, true); err != nil || o.MadeItem || o.MadeTable || o.Item.State != lifecycle.StateActive {
+		t.Errorf("the item there: %+v %v", o, err)
+	}
+	if o, err = e.c.ObserveDetail(ctx, tags.ToolSpawn, region, true); err != nil || !o.MadeItem || o.MadeTable {
+		t.Errorf("the table there, no item: %+v %v", o, err)
+	}
+	// Another caller's table, made meanwhile: not this call's.
+	e2 := newEnv(t)
+	e2.fake().Hook = func(ctx context.Context, op string) {
+		if op == "CreateTable" {
+			e2.fake().Hook = nil
+			if err := e2.client("other").MarkActive(ctx, tags.ToolSpawn, region); err != nil {
+				t.Error(err)
+			}
+		}
+	}
+	if o, err := e2.c.ObserveDetail(ctx, tool, region, false); err != nil || o.MadeTable || !o.MadeItem {
+		t.Errorf("another's table: %+v %v", o, err)
+	}
+	// Made the table, then failed.
+	e3 := newEnv(t)
+	boom := errors.New("boom")
+	e3.fake().Err = func(op string, _ any) error {
+		if op == "TransactWriteItems" && e3.fake().Calls("CreateTable") > 0 {
+			return boom
+		}
+		return nil
+	}
+	if o, err := e3.c.ObserveDetail(ctx, tool, region, false); !errors.Is(err, boom) || !o.MadeTable || o.MadeItem {
+		t.Errorf("made the table, then failed: %+v %v", o, err)
+	}
+	if _, err := e3.c.ObserveDetail(ctx, "", region, false); err == nil {
+		t.Error("an invalid tool")
+	}
+}

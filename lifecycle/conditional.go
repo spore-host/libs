@@ -339,14 +339,16 @@ func (c *Client) SetIdleIfUnchanged(ctx context.Context, tool tags.Tool, scope s
 			cleared++
 			clear, clearErr := c.clearStaleSentinel(ctx, a, c.now())
 			switch {
+			case clearErr != nil && retryable(clearErr):
+				return Item{}, fmt.Errorf("lifecycle: set %s idle: %w (%w)", key, ErrTableClosing, clearErr)
 			case clearErr != nil:
-				return Item{}, clearErr
+				return Item{}, fmt.Errorf("lifecycle: set %s idle: %w", key, clearErr)
 			case !clear:
-				return Item{}, ErrTableClosing
+				return Item{}, fmt.Errorf("lifecycle: set %s idle: %w", key, ErrTableClosing)
 			}
 			err = ErrTableClosing
 		case b.what == "sentinel":
-			return Item{}, ErrTableClosing
+			return Item{}, fmt.Errorf("lifecycle: set %s idle: %w", key, ErrTableClosing)
 		case b.what == "lease":
 			return Item{}, fmt.Errorf("lifecycle: set %s idle: %w", key, changedOrInUse(e, b.item))
 		default:

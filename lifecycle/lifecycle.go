@@ -78,7 +78,8 @@
 // its scan to its DeleteTable is protected by the sentinel, which any writer
 // treats as abandoned once it is 20 min old: the closer reads its sentinel
 // again just before DeleteTable, and deletes only while it is still its own
-// and under 10 min old, leaving one round trip unprotected.
+// and under StaleAfter/2 old (10 min by default), leaving one round trip
+// unprotected.
 package lifecycle
 
 import (
