@@ -31,12 +31,14 @@ import (
 // Observe creates the table and the item if they do not exist.
 //
 // It returns the item as it now stands and how long the tool has been idle.
-// While the table is being deleted it returns ErrTableClosing; observe again
-// on the next tick. A closing sentinel older than Options.StaleAfter was left
-// by a closer that died: Observe removes it, as MarkActive and
-// SetIdleIfUnchanged do, and observes again after a poll interval. A
-// sentinel that is back each time is removed twice at most; then Observe
-// returns ErrTableClosing. A live closer's sentinel is left alone.
+// While the table is being deleted (a live closer's sentinel) it returns
+// ErrTableClosing at once; observe again on the next tick. A stale sentinel
+// (older than Options.StaleAfter, its closer dead or stalled, or one with no
+// time: see CloseTableIfEmpty) Observe removes, as MarkActive and
+// SetIdleIfUnchanged do, and observes again at once. One that is back is
+// removed once more and observed past after one Options.PollInterval; a third
+// is ErrTableClosing. So a sentinel adds at most one PollInterval to an
+// Observe.
 func (c *Client) Observe(ctx context.Context, tool tags.Tool, scope string, active bool) (Item, time.Duration, error) {
 	a, region, key, err := c.target(tool, scope)
 	if err != nil {
@@ -50,8 +52,7 @@ func (c *Client) Observe(ctx context.Context, tool tags.Tool, scope string, acti
 		if err == nil && closing == nil {
 			it, _, err = c.get(ctx, a, key)
 		}
-		switch {
-		case isNotFound(err) && missing < 2:
+		if isNotFound(err) && missing < 2 {
 			// No table, or it was deleted under us: create it and observe
 			// again.
 			missing++
@@ -59,18 +60,28 @@ func (c *Client) Observe(ctx context.Context, tool tags.Tool, scope string, acti
 				return Item{}, 0, err
 			}
 			continue
-		case closing != nil && !closing.sentinel.IsZero() && c.isStale(closing.sentinel, c.now()) && cleared < 2:
+		}
+		if closing != nil && c.sentinelStale(closing.item, c.now()) && cleared < 2 {
 			// A closer that died left it (libs#88): remove it and observe
-			// again, a poll later. Each clear counts toward the bound.
+			// again, at once the first time and a poll later the second.
+			// Each clear counts toward the bound; one that finds a live
+			// closer's sentinel in its place is ErrTableClosing at once.
 			cleared++
-			if err := c.clearStaleSentinel(ctx, a, c.now()); err != nil {
-				return Item{}, 0, err
+			clear, err := c.clearStaleSentinel(ctx, a, c.now())
+			if err != nil {
+				return Item{}, 0, fmt.Errorf("lifecycle: observe %s: %w", key, err)
 			}
-			if err := c.again(ctx); err != nil {
-				return Item{}, 0, err
+			if clear {
+				if cleared > 1 {
+					if err := c.again(ctx); err != nil {
+						return Item{}, 0, fmt.Errorf("lifecycle: observe %s: %w", key, err)
+					}
+				}
+				start = c.now() // a table's wait counts from here
+				continue
 			}
-			continue
-		case closing != nil:
+		}
+		if closing != nil {
 			err = ErrTableClosing
 		}
 		if err != nil {
